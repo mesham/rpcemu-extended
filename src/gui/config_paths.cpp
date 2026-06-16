@@ -95,12 +95,37 @@ bool ConfigPathsIsNameUnique(const wxString &name)
 
 bool ConfigPathsCreateMachineDirectory(const wxString &machine_name)
 {
-	const wxString machine_dir = ConfigPathsMachinesDir() + wxFileName::GetPathSeparator() + machine_name;
+	const wxChar sep = wxFileName::GetPathSeparator();
+	const wxString machine_dir = ConfigPathsMachinesDir() + sep + machine_name;
 	if (!wxDir::Make(machine_dir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL)) {
 		return false;
 	}
-	const wxString hostfs_dir = machine_dir + wxFileName::GetPathSeparator() + "hostfs";
-	return wxDir::Make(hostfs_dir, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
+
+	/* Seed the new machine from the bundled "default" template so it boots with a
+	 * working CMOS and HostFS straight away. The template lives in the resource
+	 * directory (the portable tree, or <install>/default for packaged builds).
+	 * Fall back to an empty HostFS if no template is present. */
+	const wxString default_dir = ConfigPathsResourceDir() + "default";
+	const wxString default_hostfs = default_dir + sep + "hostfs";
+	const wxString machine_hostfs = machine_dir + sep + "hostfs";
+
+	bool hostfs_ok;
+	if (wxDirExists(default_hostfs)) {
+		hostfs_ok = ConfigPathsCopyDirectory(default_hostfs, machine_hostfs);
+	} else {
+		hostfs_ok = wxDir::Make(machine_hostfs, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
+	}
+	if (!hostfs_ok) {
+		return false;
+	}
+
+	const wxString default_cmos = default_dir + sep + "cmos.ram";
+	const wxString machine_cmos = machine_dir + sep + "cmos.ram";
+	if (wxFileExists(default_cmos) && !wxFileExists(machine_cmos)) {
+		wxCopyFile(default_cmos, machine_cmos, true);
+	}
+
+	return true;
 }
 
 bool ConfigPathsCopyDirectory(const wxString &src, const wxString &dst)

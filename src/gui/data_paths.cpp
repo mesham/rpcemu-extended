@@ -66,6 +66,35 @@ static void SeedFileIfMissing(const wxString &src, const wxString &dst)
 	wxCopyFile(src, dst, false);
 }
 
+/* Copy every file under src into dst, but only those not already present, so
+ * user-added files are never clobbered on subsequent launches. */
+static void SeedDirIfMissing(const wxString &src, const wxString &dst)
+{
+	if (!wxDirExists(src)) {
+		return;
+	}
+	wxDir::Make(dst, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
+
+	wxFileName src_root(src);
+	src_root.Normalize(wxPATH_NORM_ALL);
+	const wxString src_prefix = src_root.GetPathWithSep();
+
+	wxArrayString files;
+	wxDir::GetAllFiles(src, &files, wxEmptyString, wxDIR_FILES);
+	for (const auto &full_src : files) {
+		wxString rel = full_src;
+		if (rel.StartsWith(src_prefix)) {
+			rel = rel.Mid(src_prefix.Length());
+		}
+		const wxString full_dst = dst + wxFileName::GetPathSeparator() + rel;
+		if (wxFileExists(full_dst)) {
+			continue;
+		}
+		wxFileName(full_dst).Mkdir(wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
+		wxCopyFile(full_src, full_dst, false);
+	}
+}
+
 static bool SeedUserDataDir(const wxString &resource_dir, const wxString &user_dir)
 {
 	const wxString resource = NormalizeDirPath(resource_dir);
@@ -107,8 +136,9 @@ static bool SeedUserDataDir(const wxString &resource_dir, const wxString &user_d
 	if (!wxDir::Make(user_roms, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL)) {
 		return false;
 	}
-	SeedFileIfMissing(resource + "roms" + wxFileName::GetPathSeparator() + "roms.txt",
-	                  user_roms + wxFileName::GetPathSeparator() + "roms.txt");
+	/* Seed the whole bundled roms/ directory (ROM images + roms.txt), not just the
+	 * index, so a packaged install can boot out of the box. */
+	SeedDirIfMissing(resource + "roms", user_roms);
 
 	const wxString user_netroms = user + "netroms";
 	const wxString resource_netroms = resource + "netroms";

@@ -28,9 +28,15 @@ install(DIRECTORY configs/ DESTINATION share/rpcemu/configs)
 install(DIRECTORY resources/ DESTINATION share/rpcemu/resources)
 install(DIRECTORY poduleroms/ DESTINATION share/rpcemu/poduleroms)
 install(DIRECTORY netroms/ DESTINATION share/rpcemu/netroms)
-install(FILES roms/roms.txt DESTINATION share/rpcemu/roms)
+install(DIRECTORY roms/ DESTINATION share/rpcemu/roms)
+# Factory seed used to populate new machines (cmos.ram + hostfs).
+install(DIRECTORY default/ DESTINATION share/rpcemu/default)
+# Ship a ready-to-run Default machine. Use the tracked machines/Default if present
+# (local dev), otherwise derive it from the default/ seed (fresh clone / CI).
 if(EXISTS "${CMAKE_SOURCE_DIR}/machines/Default")
     install(DIRECTORY machines/Default/ DESTINATION share/rpcemu/machines/Default)
+else()
+    install(DIRECTORY default/ DESTINATION share/rpcemu/machines/Default)
 endif()
 install(FILES README.md COPYING COMPILE.md docs/dynarec.md DESTINATION share/doc/rpcemu)
 install(FILES packaging/rpcemu.desktop DESTINATION share/applications)
@@ -50,11 +56,11 @@ set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/COPYING")
 set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Andrew Timmins")
 set(CPACK_DEBIAN_PACKAGE_SECTION "games")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
-if(RPCEMU_ENABLE_VNC)
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libwxgtk3.2-1, libsdl2-2.0-0, libvncserver1")
-else()
-    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libwxgtk3.2-1, libsdl2-2.0-0")
-endif()
+# Derive the runtime dependencies automatically from the linked binary via
+# dpkg-shlibdeps. This picks the exact package names for this distro (e.g. the
+# libwxgtk3.2-1t64 rename on Ubuntu 24.04) and includes everything the binary
+# links - wxWidgets, SDL2, libvncserver, Ghostscript (libgs), GTK 3, etc.
+set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 
 include(CPack)

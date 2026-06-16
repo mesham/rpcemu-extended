@@ -183,14 +183,19 @@ stage_linux_release() {
 	cp -a poduleroms "$LINUX_RELEASE/"
 	cp -a netroms "$LINUX_RELEASE/"
 	cp -a resources "$LINUX_RELEASE/"
-	mkdir -p "$LINUX_RELEASE/roms"
-	cp -f roms/roms.txt "$LINUX_RELEASE/roms/"
+	cp -a roms "$LINUX_RELEASE/"
+	cp -a default "$LINUX_RELEASE/"
 	rm -rf "$LINUX_RELEASE/machines/Default"
 	mkdir -p "$LINUX_RELEASE/machines/Default"
 	if [ -d machines/Default ]; then
 		cp -a machines/Default/. "$LINUX_RELEASE/machines/Default/"
+	else
+		# Fresh clone / CI: derive the Default machine from the default/ seed.
+		[ -f default/cmos.ram ] && cp -a default/cmos.ram "$LINUX_RELEASE/machines/Default/"
+		[ -d default/hostfs ] && cp -a default/hostfs "$LINUX_RELEASE/machines/Default/"
 	fi
 	cp -f COPYING README.md COMPILE.md "$LINUX_RELEASE/" 2>/dev/null || true
+	cp -f setup-runtime-env.sh "$LINUX_RELEASE/" 2>/dev/null || true
 	if [ -f packaging/rpcemu.desktop ]; then
 		cp -f packaging/rpcemu.desktop "$LINUX_RELEASE/"
 	fi

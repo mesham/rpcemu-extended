@@ -69,6 +69,30 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 
 ## Getting started
 
+### Supported systems
+
+The prebuilt release is a **64-bit x86 (amd64)** Linux binary, built on **Ubuntu
+24.04 LTS**. Because it is dynamically linked, it runs on distributions whose system
+libraries are that version or newer. In practice that means:
+
+| Distribution | Runs the prebuilt release? |
+| --- | --- |
+| Ubuntu 24.04 LTS (Noble) and newer (24.10, 25.04, …) | ✅ Yes — primary target |
+| Linux Mint 22 / 22.x, Pop!_OS 24.04, Zorin 18, elementary 8, KDE neon (24.04 base) | ✅ Yes |
+| Debian 13 (Trixie) and newer | ✅ Yes |
+| Ubuntu 22.04 LTS, Debian 12 (Bookworm) and older | ❌ No — system libraries too old |
+| Non-x86 (arm64 / Raspberry Pi, etc.) | ❌ Not in the prebuilt download — build from source |
+
+Minimum requirements: **glibc ≥ 2.34**, **libstdc++ from GCC 13.2+** (`GLIBCXX_3.4.32`),
+and **wxWidgets 3.2**. These ship as standard on Ubuntu 24.04-era distributions.
+
+On an older or different distribution (or for arm64), **build from source** instead —
+`./setup-build-env.sh` then `./build.sh` adapts to your system's libraries. See
+[COMPILE.md](COMPILE.md).
+
+The portable `.tar.gz` needs its runtime libraries installed once (`./setup-runtime-env.sh`);
+the `.deb` installs them automatically. See [Run](#run) below.
+
 ### Build
 
 ```bash
@@ -86,6 +110,17 @@ See [COMPILE.md](COMPILE.md) for manual CMake, GhostPDL, and podule ROM rebuilds
 ```
 
 Run from the project root (or a staged release directory) so data files are found.
+
+If you downloaded the portable **`.tar.gz`** release and see an error like
+`error while loading shared libraries: libwx_gtk3u_core-3.2.so.0`, install the
+runtime libraries once:
+
+```bash
+./setup-runtime-env.sh
+```
+
+(The **`.deb`** package pulls these in automatically via apt, so this step is only
+needed for the portable tarball.)
 
 ### First launch
 
@@ -231,6 +266,7 @@ how the JIT is built and when it falls back to interpretation.
 
 | Symptom | Remedy |
 | --- | --- |
+| `error while loading shared libraries: …` (tarball) | Run `./setup-runtime-env.sh` to install the runtime libraries (wxWidgets, SDL2, libvncserver, Ghostscript) |
 | Window does not appear / configs not found | Run from the project root or a staged release directory |
 | No audio | Ensure PulseAudio or PipeWire is running (SDL2) |
 | No network | Select NAT in machine settings; SLiRP is always compiled in on Linux |

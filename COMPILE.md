@@ -26,6 +26,10 @@ Or run directly from the build tree (requires runtime data in the project root):
 ./build/bin/rpcemu-recompiler
 ```
 
+End users who download the portable `.tar.gz` (rather than building) can install the
+runtime shared libraries with `./setup-runtime-env.sh`. The `.deb` package declares
+these dependencies (auto-derived via `dpkg-shlibdeps`), so apt installs them for you.
+
 Debian packages install the binary to `/usr/bin`, bundled assets under
 `/usr/share/rpcemu/`, and per-user data under `~/.local/share/rpcemu/` (or
 `$XDG_DATA_HOME/rpcemu/`). On first run, default configs and machine templates
