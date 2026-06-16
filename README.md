@@ -8,16 +8,6 @@ build tooling.
 
 Licensed under the **GNU GPL v2** — see `COPYING`.
 
-## Screenshots
-
-![Machine Selection](screenshots/machine-selection.png)
-![Main Window](screenshots/new-layout.png)
-![VNC Server](screenshots/vnc.png)
-![Access Networking](screenshots/access.png)
-![Machine Inspector](screenshots/inspector.png)
-![Disassembly View](screenshots/diss.png)
-![Memory Browser](screenshots/mem.png)
-
 ---
 
 ## Highlights
