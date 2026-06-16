@@ -48,6 +48,7 @@ sudo apt install -y \
 	cmake \
 	pkg-config \
 	libwxgtk3.2-dev \
+	libgtk-3-dev \
 	libsdl2-dev \
 	libgs-dev \
 	ghostscript \
