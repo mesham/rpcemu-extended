@@ -544,6 +544,17 @@ do_fault:
 	return 0;
 }
 
+void
+cp15_get_fault(uint32_t *fault_address, uint32_t *fault_status)
+{
+	if (fault_address != NULL) {
+		*fault_address = cp15.fault_address;
+	}
+	if (fault_status != NULL) {
+		*fault_status = cp15.fault_status;
+	}
+}
+
 /*uint32_t translateaddress(uint32_t addr, int rw)
 {
         if (!(addr&0xFC000000) && !(tlbcache[(addr>>12)&0x3FFF]&0xFFF))

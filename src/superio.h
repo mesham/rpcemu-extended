@@ -38,6 +38,7 @@ typedef enum {
 extern void superio_reset(SuperIOType chosen_super_type);
 extern uint8_t superio_read(uint32_t addr);
 extern void superio_write(uint32_t addr, uint32_t val);
+extern void superio_write_byte(uint32_t addr, uint8_t byte);
 
 extern void superio_smi_setint1(uint8_t i);
 extern void superio_smi_setint2(uint8_t i);
@@ -49,6 +50,10 @@ extern void superio_get_snapshot(SuperIOStateSnapshot *snapshot);
 #include "serial.h"  /* For SerialPortID */
 extern void superio_serial_rx(SerialPortID port, uint8_t data);
 extern void superio_serial_update_msr(SerialPortID port, uint8_t status);
+
+/* Free space (in bytes) in a UART's receive FIFO. Lets a backend feed incoming
+ * data at the rate the guest drains it, instead of overrunning the 16-byte FIFO. */
+extern int superio_serial_rx_space(SerialPortID port);
 
 #ifdef __cplusplus
 }

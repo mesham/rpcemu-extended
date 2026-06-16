@@ -1,0 +1,207 @@
+#include "emulator_snapshot.h"
+
+#include <cstdio>
+#include <cstring>
+
+extern "C" {
+#include "arm.h"
+#include "arm_disasm.h"
+#include "fdc.h"
+#include "ide.h"
+#include "iomd.h"
+#include "mem.h"
+#include "podules.h"
+#include "rpcemu.h"
+#include "superio.h"
+#include "vidc20.h"
+}
+
+namespace {
+
+const char *
+cpu_model_to_string(CPUModel cpu_model)
+{
+	switch (cpu_model) {
+	case CPUModel_ARM610:     return "ARM610";
+	case CPUModel_ARM710:     return "ARM710";
+	case CPUModel_SA110:      return "StrongARM SA-110";
+	case CPUModel_ARM7500:    return "ARM7500";
+	case CPUModel_ARM7500FE:  return "ARM7500FE";
+	case CPUModel_ARM810:     return "ARM810";
+	default:                  return "Unknown";
+	}
+}
+
+void
+emulator_fill_snapshot(MachineSnapshot *snapshot)
+{
+	if (snapshot == nullptr) {
+		return;
+	}
+
+	memset(snapshot, 0, sizeof(*snapshot));
+
+	const Model_Details *details = nullptr;
+	if (machine.model >= 0 && machine.model < Model_MAX) {
+		details = &models[machine.model];
+	}
+
+	if (details != nullptr && details->name_gui != nullptr) {
+		snprintf(snapshot->model_name, sizeof(snapshot->model_name), "%s", details->name_gui);
+	} else {
+		snprintf(snapshot->model_name, sizeof(snapshot->model_name), "%s", "Unknown");
+	}
+
+	const char *cpu_name = cpu_model_to_string(machine.cpu_model);
+	snprintf(snapshot->cpu_name, sizeof(snapshot->cpu_name), "%s", cpu_name);
+	snapshot->dynarec = arm_is_dynarec();
+
+	for (int i = 0; i < 16; i++) {
+		snapshot->regs[i] = arm.reg[i];
+	}
+
+	snapshot->cpsr = arm.reg[cpsr];
+	snapshot->mode = arm.mode;
+
+	const uint32_t pc = PC;
+	snapshot->pc = pc;
+
+	for (int i = 0; i < 8; i++) {
+		const uint32_t addr = (pc + static_cast<uint32_t>(i * 4)) & arm.r15_mask;
+		snapshot->pipeline_addr[i] = addr;
+		snapshot->pipeline_data[i] = mem_read32(addr);
+	}
+
+	snapshot->mmu_enabled = mmu;
+	snapshot->privileged_mode = ((arm.mode & 0x1f) != USER) ? 1 : 0;
+
+	snapshot->iomd_irqa_status = iomd.irqa.status;
+	snapshot->iomd_irqa_mask   = iomd.irqa.mask;
+	snapshot->iomd_irqb_status = iomd.irqb.status;
+	snapshot->iomd_irqb_mask   = iomd.irqb.mask;
+	snapshot->iomd_fiq_status  = iomd.fiq.status;
+	snapshot->iomd_fiq_mask    = iomd.fiq.mask;
+	snapshot->iomd_dma_status  = iomd.irqdma.status;
+	snapshot->iomd_dma_mask    = iomd.irqdma.mask;
+
+	snapshot->iomd_timer0_counter   = static_cast<uint32_t>(iomd.t0.counter);
+	snapshot->iomd_timer0_in_latch  = iomd.t0.in_latch;
+	snapshot->iomd_timer0_out_latch = iomd.t0.out_latch;
+	snapshot->iomd_timer1_counter   = static_cast<uint32_t>(iomd.t1.counter);
+	snapshot->iomd_timer1_in_latch  = iomd.t1.in_latch;
+	snapshot->iomd_timer1_out_latch = iomd.t1.out_latch;
+	snapshot->iomd_sound_status     = iomd.sndstat;
+
+	snapshot->floppy_motor_on = motoron;
+
+	snapshot->perf_mips      = perf.mips;
+	snapshot->perf_mhz       = perf.mhz;
+	snapshot->perf_tlb_sec   = perf.tlb_sec;
+	snapshot->perf_flush_sec = perf.flush_sec;
+
+	snapshot->config_mem_size  = config.mem_size;
+	snapshot->config_vram_size = config.vram_size;
+	snapshot->network_type     = config.network_type;
+	snapshot->cpu_idle_enabled = config.cpu_idle;
+
+	DebuggerStatus debug_status;
+	debugger_get_status(&debug_status);
+	snapshot->debug_paused = debug_status.paused;
+	snapshot->debug_pause_requested = debug_status.pause_requested;
+	snapshot->debug_pause_reason = debug_status.reason;
+	snapshot->debug_halt_pc = debug_status.halt_pc;
+	snapshot->debug_halt_opcode = debug_status.halt_opcode;
+	snapshot->debug_last_pc = debug_status.last_pc;
+	snapshot->debug_last_opcode = debug_status.last_opcode;
+	snapshot->debug_hit_address = debug_status.hit_address;
+	snapshot->debug_hit_value = debug_status.hit_value;
+	snapshot->debug_hit_size = debug_status.hit_size;
+	snapshot->debug_hit_is_write = debug_status.hit_is_write;
+	snapshot->debug_step_active = debug_status.step_active;
+
+	uint32_t bp_count = debug_status.breakpoint_count;
+	if (bp_count > DEBUGGER_MAX_BREAKPOINTS) {
+		bp_count = DEBUGGER_MAX_BREAKPOINTS;
+	}
+	snapshot->debug_breakpoint_count = bp_count;
+	if (bp_count > 0) {
+		memcpy(snapshot->debug_breakpoints,
+		       debug_status.breakpoints,
+		       bp_count * sizeof(uint32_t));
+	}
+
+	uint32_t wp_count = debug_status.watchpoint_count;
+	if (wp_count > DEBUGGER_MAX_WATCHPOINTS) {
+		wp_count = DEBUGGER_MAX_WATCHPOINTS;
+	}
+	snapshot->debug_watchpoint_count = wp_count;
+	if (wp_count > 0) {
+		memcpy(snapshot->debug_watchpoints,
+		       debug_status.watchpoints,
+		       wp_count * sizeof(DebugWatchpointInfo));
+	}
+
+	vidc_get_snapshot(&snapshot->vidc);
+	int double_x = 0;
+	int double_y = 0;
+	vidc_get_doublesize(&double_x, &double_y);
+	snapshot->vidc_double_x = static_cast<uint8_t>(double_x);
+	snapshot->vidc_double_y = static_cast<uint8_t>(double_y);
+	superio_get_snapshot(&snapshot->superio);
+	ide_get_snapshot(&snapshot->ide);
+	podules_get_snapshot(&snapshot->podules);
+}
+
+} // namespace
+
+MachineSnapshot
+emulator_take_snapshot()
+{
+	MachineSnapshot snapshot;
+	emulator_fill_snapshot(&snapshot);
+	return snapshot;
+}
+
+std::vector<uint8_t>
+emulator_read_memory(uint32_t address, uint32_t length)
+{
+	if (length > 4096) {
+		length = 4096;
+	}
+
+	std::vector<uint8_t> data;
+	data.reserve(length);
+
+	for (uint32_t i = 0; i < length; i++) {
+		data.push_back(mem_phys_read8_debug(address + i));
+	}
+
+	return data;
+}
+
+std::string
+emulator_disassemble_at(uint32_t address, int count)
+{
+	if (count <= 0) {
+		count = 1;
+	}
+	if (count > 256) {
+		count = 256;
+	}
+
+	std::string result;
+	char disasm_buf[128];
+
+	for (int i = 0; i < count; i++) {
+		const uint32_t addr = address + static_cast<uint32_t>(i * 4);
+		const uint32_t opcode = mem_read32(addr);
+
+		arm_disasm(opcode, addr, disasm_buf, sizeof(disasm_buf));
+
+		char line[256];
+		snprintf(line, sizeof(line), "%08x: %08x  %s\n", addr, opcode, disasm_buf);
+		result += line;
+	}
+
+	return result;
+}

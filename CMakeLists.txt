@@ -1,0 +1,60 @@
+cmake_minimum_required(VERSION 3.16)
+
+file(READ "${CMAKE_SOURCE_DIR}/VERSION" RPCEMU_VERSION)
+string(STRIP "${RPCEMU_VERSION}" RPCEMU_VERSION)
+
+project(rpcemu VERSION ${RPCEMU_VERSION} LANGUAGES C)
+
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS ON)
+
+option(RPCEMU_DYNAREC "Build with ARM dynamic recompiler" ON)
+option(RPCEMU_ENABLE_WARNINGS "Enable extra compiler warnings" ON)
+option(RPCEMU_ENABLE_GHOSTPDL "Enable in-process Ghostscript PDF conversion" ON)
+option(RPCEMU_ENABLE_VNC "Enable VNC server support (requires libvncserver)" ON)
+
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "RPCEmu (Spork Edition) supports Linux only.")
+endif()
+
+if(RPCEMU_ENABLE_WARNINGS)
+    add_compile_options(-Wall -Wextra -Werror=switch -fno-common)
+endif()
+
+add_subdirectory(src)
+
+install(DIRECTORY configs/ DESTINATION share/rpcemu/configs)
+install(DIRECTORY resources/ DESTINATION share/rpcemu/resources)
+install(DIRECTORY poduleroms/ DESTINATION share/rpcemu/poduleroms)
+install(DIRECTORY netroms/ DESTINATION share/rpcemu/netroms)
+install(FILES roms/roms.txt DESTINATION share/rpcemu/roms)
+if(EXISTS "${CMAKE_SOURCE_DIR}/machines/Default")
+    install(DIRECTORY machines/Default/ DESTINATION share/rpcemu/machines/Default)
+endif()
+install(FILES README.md COPYING COMPILE.md docs/dynarec.md DESTINATION share/doc/rpcemu)
+install(FILES packaging/rpcemu.desktop DESTINATION share/applications)
+
+set(CPACK_PACKAGE_NAME "rpcemu")
+set(CPACK_PACKAGE_VENDOR "Andrew Timmins")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RPCEmu (Spork Edition)")
+set(CPACK_PACKAGE_DESCRIPTION "Acorn RiscPC and A7000 emulator with HostFS, networking, and Spork Edition enhancements.")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
+set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
+set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
+set(CPACK_PACKAGE_CONTACT "andrew@example.com")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/andrewtimmins/rpcemu-extended")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/COPYING")
+
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Andrew Timmins")
+set(CPACK_DEBIAN_PACKAGE_SECTION "games")
+set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
+if(RPCEMU_ENABLE_VNC)
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libwxgtk3.2-1, libsdl2-2.0-0, libvncserver1")
+else()
+    set(CPACK_DEBIAN_PACKAGE_DEPENDS "libwxgtk3.2-1, libsdl2-2.0-0")
+endif()
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+
+include(CPack)

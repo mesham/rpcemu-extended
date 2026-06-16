@@ -25,8 +25,7 @@
 extern "C" {
 #endif /* __cplusplus */
 
-/* this header file lists the functions provided by
-   various platform specific cdrom-ioctl files */
+/* this header file lists the functions provided by cdrom-ioctl.c */
 
 extern int ioctl_open(char d);
 

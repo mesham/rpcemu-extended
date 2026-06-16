@@ -26,11 +26,7 @@
 #include <string.h>
 
 #include <dirent.h>
-#ifdef _MSC_VER
-#define PATH_MAX 1024
-#else
 #include <unistd.h>
-#endif
 #include <sys/stat.h>
 #include <limits.h>
 #include <stdint.h>
@@ -41,15 +37,6 @@
 #include "hostfs_internal.h"
 
 #define HOSTFS_PROTOCOL_VERSION	3
-
-/* Windows mkdir() function only takes one argument name, and
-   name clashes with Posix mkdir() function taking two. This
-   macro allows us to use one API to work with both variants */
-#if (defined _WIN32 || defined __WIN32__) && ! defined __CYGWIN__
-# include <direct.h>
-
-# define mkdir(name, mode) _mkdir(name)
-#endif
 
 typedef int bool;
 
@@ -129,6 +116,10 @@ static const char *disc_name_shared = "Shared";
 static char HOSTFS_ROOT[512];
 static char SHARED_ROOT[512];
 
+/** Current selected directory for each HostFS disc */
+static char csd_hostfs[PATH_MAX];
+static char csd_shared[PATH_MAX];
+
 static FILE *open_file[MAX_OPEN_FILES + 1]; /* array subscript 0 is never used */
 
 static unsigned char *buffer = NULL;
@@ -184,6 +175,62 @@ hostfs_get_root_for_disc(const char *disc_name)
     return SHARED_ROOT;
   }
   return HOSTFS_ROOT;
+}
+
+static const char *
+hostfs_get_csd_for_root(const char *root_path)
+{
+  if (STREQ(root_path, SHARED_ROOT)) {
+    return csd_shared;
+  }
+  return csd_hostfs;
+}
+
+static void
+hostfs_set_csd_for_root(const char *root_path, const char *host_path)
+{
+  char *csd = (char *) hostfs_get_csd_for_root(root_path);
+
+  strncpy(csd, host_path, PATH_MAX - 1);
+  csd[PATH_MAX - 1] = '\0';
+}
+
+/**
+ * Move a partially resolved host path up one directory level,
+ * but not above the disc root.
+ */
+static void
+hostfs_path_go_parent(char *host_pathname, const char *root_path)
+{
+  size_t root_len = strlen(root_path);
+  char *slash;
+
+  if (host_pathname[0] == '\0') {
+    strcpy(host_pathname, root_path);
+    return;
+  }
+
+  if (STREQ(host_pathname, root_path)) {
+    return;
+  }
+
+  slash = strrchr(host_pathname, '/');
+  if (slash == NULL) {
+    strcpy(host_pathname, root_path);
+    return;
+  }
+
+  /* Keep at least the disc root */
+  if ((size_t) (slash - host_pathname) <= root_len) {
+    strcpy(host_pathname, root_path);
+    return;
+  }
+
+  *slash = '\0';
+
+  if (strncmp(host_pathname, root_path, root_len) != 0) {
+    strcpy(host_pathname, root_path);
+  }
 }
 
 /**
@@ -710,6 +757,24 @@ hostfs_path_process(const char *ro_path,
 
     case '/':
       *component++ = '.';
+      break;
+
+    case '^':
+      hostfs_path_go_parent(host_pathname, root_path);
+      component = &component_name[0];
+      *component = '\0';
+      break;
+
+    case '@':
+      strcpy(host_pathname, hostfs_get_csd_for_root(root_path));
+
+      hostfs_read_object_info(host_pathname, NULL, object_info);
+      if (object_info->type == OBJECT_TYPE_NOT_FOUND) {
+        return FILECORE_ERROR_NOTFOUND;
+      }
+
+      component = &component_name[0];
+      *component = '\0';
       break;
 
     default:
@@ -1518,6 +1583,8 @@ hostfs_func_0_chdir(ARMul_State *state)
 {
   char ro_path[PATH_MAX];
   char host_path[PATH_MAX];
+  risc_os_object_info object_info;
+  const char *root_path = HOSTFS_ROOT;
 
   assert(state);
 
@@ -1525,9 +1592,21 @@ hostfs_func_0_chdir(ARMul_State *state)
   dbug_hostfs("\tr1 = 0x%08x (ptr to wildcarded dir. name)\n", state->Reg[1]);
 
   get_string(state, state->Reg[1], ro_path, sizeof(ro_path));
-  riscos_path_to_host(ro_path, host_path);
   dbug_hostfs("\tPATH = %s\n", ro_path);
-  dbug_hostfs("\tPATH2 = %s\n", host_path);
+
+  if (hostfs_path_process(ro_path, host_path, &object_info) != 0 ||
+      object_info.type == OBJECT_TYPE_NOT_FOUND) {
+    return;
+  }
+
+  if (strncmp(host_path, SHARED_ROOT, strlen(SHARED_ROOT)) == 0 &&
+      (host_path[strlen(SHARED_ROOT)] == '\0' ||
+       host_path[strlen(SHARED_ROOT)] == '/')) {
+    root_path = SHARED_ROOT;
+  }
+
+  hostfs_set_csd_for_root(root_path, host_path);
+  dbug_hostfs("\tHOST_PATH = %s\n", host_path);
 }
 
 static void
@@ -2138,6 +2217,9 @@ hostfs_init(void)
       SHARED_ROOT[c] = '/';
     }
   }
+
+  strcpy(csd_hostfs, HOSTFS_ROOT);
+  strcpy(csd_shared, SHARED_ROOT);
 }
 
 /**
@@ -2149,6 +2231,9 @@ hostfs_reset(void)
   unsigned i;
 
   hostfs_state = HOSTFS_STATE_UNREGISTERED;
+
+  strcpy(csd_hostfs, HOSTFS_ROOT);
+  strcpy(csd_shared, SHARED_ROOT);
 
   /* Close any open files */
   for (i = 1; i < (MAX_OPEN_FILES + 1); i++) {

@@ -7,6 +7,7 @@
 	@ RISC OS constants
 	XOS_Write0          = 0x20002
 	XOS_CLI             = 0x20005
+	XOS_ReadVarVal      = 0x20024
 	XOS_FSControl       = 0x20029
 	XOS_ValidateAddress = 0x2003a
 	XMessageTrans_ErrorLookup = 0x61506
@@ -148,6 +149,12 @@ init:
 	mov	r2, r12
 	swi	XFree_Register
 
+	@ FilerAct drag-copy canonicalises <Boot$Dir>.^; if Boot$Dir is unset
+	@ drag-and-drop fails with "filename '.^' not recognised" (ROOL #660).
+	bl	init_ensure_bootdir
+
+	cmp	pc, #0		@ Clear V flag before successful return
+
 	ldmfd	sp!, {r9, pc}
 
 init_failed_registration:
@@ -160,6 +167,33 @@ err_failed_registration:
 	.int	0
 	.string	"Failed registration with emulator"
 	.align
+
+bootdir_var_name:
+	.string	"Boot$Dir"
+	.align
+
+bootdir_set_cmd:
+	.string	"Set Boot$Dir HostFS::HostFS.$"
+	.align
+
+	@ Set Boot$Dir during module init if not already defined.
+init_ensure_bootdir:
+	stmfd	sp!, {r0-r3, lr}
+
+	adr	r0, bootdir_var_name
+	mov	r1, #0
+	mvn	r2, #0
+	mov	r3, #0
+	swi	XOS_ReadVarVal
+	bvs	init_bootdir_done
+	cmp	r2, #0
+	blt	init_bootdir_done
+
+	adr	r0, bootdir_set_cmd
+	swi	XOS_CLI
+
+init_bootdir_done:
+	ldmfd	sp!, {r0-r3, pc}
 
 
 

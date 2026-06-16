@@ -38,7 +38,8 @@ extern "C" {
 
 #define IOMD_IRQB_PODULE_FIQ_AS_IRQ	0x01 /* Podule FIQ downgraded to IRQ */
 #define IOMD_IRQB_IDE			0x02
-#define IOMD2_IRQB_SUPERIO_SMI		0x04 /* Used by IOMD2 */
+#define IOMD_IRQB_SERIAL		0x04 /* 16550 serial port IRQ (IOMD Risc PC, HAL serial devno 10 -> IRQB bit 2) */
+#define IOMD2_IRQB_SUPERIO_SMI		0x04 /* Used by IOMD2 (shares bit 2 with serial; IOMD2/Phoebe only) */
 // Unused				0x08
 #define IOMD_IRQB_FLOPPY		0x10
 #define IOMD_IRQB_PODULE		0x20

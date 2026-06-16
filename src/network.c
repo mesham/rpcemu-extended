@@ -19,10 +19,12 @@
  */
 
 /*
- network.c - code shared between each host platforms networking support
+ network.c - networking support shared with network-tun.c
  */
 #include <assert.h>
 #include <ctype.h>
+#include <errno.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "rpcemu.h"
@@ -72,7 +74,8 @@ makechunk(uint8_t type, uint32_t filebase, uint32_t size)
 static void
 network_rom_init(void)
 {
-	FILE *f;
+	FILE *f = NULL;
+	char module_path[512];
 	size_t module_file_size = 0;
 
 	// Build podule header
@@ -80,8 +83,12 @@ network_rom_init(void)
 	filebase = chunkbase + (8 * 2) + 4; // required size for two entries
 	poduleromsize = filebase + ((sizeof(description) + 3) & ~3u); // Word align description string
 
+	/* Driver module lives alongside poduleroms in the resource directory */
+	snprintf(module_path, sizeof(module_path), "%snetroms/EtherRPCEm,ffa",
+	         rpcemu_get_resourcedir());
+
 	// Add on size for driver module if it can be opened successfully
-	f = fopen("netroms/EtherRPCEm,ffa", "rb");
+	f = fopen(module_path, "rb");
 	if (f != NULL) {
 		long len;
 
@@ -94,7 +101,11 @@ network_rom_init(void)
 		} else {
 			fclose(f);
 			f = NULL;
+			rpclog("Network: '%s' has invalid size (%ld bytes)\n", module_path, len);
 		}
+	} else {
+		rpclog("Network: could not open EtherRPCEm module '%s': %s\n",
+		       module_path, strerror(errno));
 	}
 
 	// Allocate memory
@@ -126,6 +137,11 @@ network_rom_init(void)
 		if (len == module_file_size) { // Load was OK
 			len = (len + 3) & ~3u;
 			makechunk(0x81, filebase, (uint32_t) len); // 0x81 = RISC OS, ROM
+			rpclog("Network: loaded EtherRPCEm driver (%zu bytes) into podule ROM\n",
+			       module_file_size);
+		} else {
+			rpclog("Network: failed to read EtherRPCEm module from '%s'\n",
+			       module_path);
 		}
 	}
 }

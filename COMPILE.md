@@ -1,149 +1,193 @@
 # How to Compile RPCEmu
 
-RPCEmu (Spork Edition) is built using the Qt 5 framework. It supports compiling natively on Linux and Windows, as well as cross-compiling for Windows from Linux.
+RPCEmu (Spork Edition) is a **Linux-only** build. It uses **CMake** and the `build.sh`
+script at the project root.
 
-## Linux (Native)
+The emulator core (`src/`) is C11. The wxWidgets front-end (`src/gui/`) is C++17.
 
-### 1. Install Dependencies (Debian/Ubuntu)
+---
 
-You will need a C++ compiler, Qt 5 development libraries, and development headers for VNC support.
+## Quick start
 
 ```bash
-sudo apt-get update
-sudo apt-get install build-essential qtbase5-dev qtbase5-dev-tools libvncserver-dev
+./setup-build-env.sh    # once: install apt dependencies
+./build.sh --zip        # release build + staged tarball
 ```
 
-*Note: On older Debian/Ubuntu versions, `qt5-default` might differ.*
-
-### 2. Build
-
-RPCEmu uses `qmake` to generate a Makefile.
+Run the staged binary:
 
 ```bash
-# Navigate to the source directory
-cd src/qt5
-
-# Generate makefile
-qmake rpcemu.pro
-
-# Compile
-make
+./releases/linux/amd64/rpcemu-recompiler
 ```
 
-The resulting executable `rpcemu-recompiler` (or `rpcemu-interpreter`) will be placed in the project root directory.
-
-### 3. Run
+Or run directly from the build tree (requires runtime data in the project root):
 
 ```bash
-cd ../..
-./rpcemu-recompiler
+./build/bin/rpcemu-recompiler
+```
+
+Debian packages install the binary to `/usr/bin`, bundled assets under
+`/usr/share/rpcemu/`, and per-user data under `~/.local/share/rpcemu/` (or
+`$XDG_DATA_HOME/rpcemu/`). On first run, default configs and machine templates
+are copied into the user data directory. Override paths with `RPCEMU_DATADIR` or
+`RPCEMU_RESOURCE_DIR` if needed.
+
+**Important:** run RPCEmu from the project root (or from a staged release directory)
+so it can find `configs/`, `machines/`, `roms/`, `resources/`, `poduleroms/`, and
+`shared/` when using portable tarballs. Installed `.deb` packages resolve these
+automatically.
+
+---
+
+## Build script reference
+
+```bash
+./build.sh                         # Linux release build (dynarec)
+./build.sh --interpreter           # interpreter build (no dynarec)
+./build.sh --debug                 # debug build (-debug suffix on binary name)
+./build.sh --arch arm64            # Linux arm64 (native on Pi)
+./build.sh --cross-arm64           # cross-compile Linux arm64 from x86_64
+./build.sh --deb                   # Linux + .deb for selected arch
+./build.sh --zip                   # Linux .tar.gz in releases/linux/
+./build.sh --podules               # rebuild HostFS podule ROMs
+./build.sh --clean                 # remove build trees and releases/
+./build.sh --help                  # full option list
+```
+
+### Output locations
+
+| Build | Binary | Staged release |
+| --- | --- | --- |
+| Linux dynarec (default) | `build/bin/rpcemu-recompiler` | `releases/linux/<arch>/rpcemu-recompiler` |
+| Linux interpreter | `build/bin/rpcemu-interpreter` | `releases/linux/<arch>/rpcemu-interpreter` |
+| Linux debug | `build/bin/rpcemu-recompiler-debug` | `releases/linux/<arch>/rpcemu-recompiler-debug` |
+| Linux `.deb` | — | `releases/linux/<arch>/rpcemu_<version>_<arch>.deb` |
+
+Supported Linux architectures: **amd64** and **arm64** (`--arch` or native host).
+
+Release archive: `releases/linux/rpcemu_<version>_linux_<arch>.tar.gz`
+
+The Linux release staging step copies `configs/`, `poduleroms/`, `resources/`,
+`roms/roms.txt`, and a default `machines/Default/` tree. The `shared/` directory is
+created automatically at runtime if it does not exist.
+
+---
+
+## Dependencies
+
+Installed automatically by `./setup-build-env.sh` on Debian/Ubuntu:
+
+| Package | Purpose |
+| --- | --- |
+| `build-essential`, `cmake`, `pkg-config` | Build toolchain |
+| `libwxgtk3.2-dev` | wxWidgets GUI (GTK 3 backend) |
+| `libsdl2-dev` | Audio output |
+| `libvncserver-dev` | Built-in VNC server |
+| `libgs-dev`, `ghostscript` | In-process PostScript → PDF conversion (optional but recommended) |
+
+Optional extras:
+
+```bash
+./setup-build-env.sh --cross-arm64  # aarch64-linux-gnu (cross from x86 PC)
+./setup-build-env.sh --podules      # ARM binutils for podule ROM rebuild
 ```
 
 ---
 
-## Windows (Native)
-
-We recommend using **MSYS2** to provide a Unix-like build environment on Windows.
-
-### 1. Install MSYS2
-
-1.  Download and install MSYS2 from [msys2.org](https://www.msys2.org/).
-2.  Run the **MSYS2 MSYS** terminal and update the package database:
-    ```bash
-    pacman -Syu
-    ```
-    *(You may need to restart the terminal and run it again)*
-
-### 2. Install Dependencies available in the Mingw64 shell
-
-Open the **MSYS2 MinGW 64-bit** terminal (this is important, do not use the standard MSYS terminal for this step) and install the necessary tools and Qt 5:
+## Manual CMake
 
 ```bash
-pacman -S mingw-w64-x86_64-toolchain mingw-w64-x86_64-qt5
+cmake -S . -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DRPCEMU_DYNAREC=ON \
+  -DRPCEMU_ENABLE_VNC=ON \
+  -DRPCEMU_ENABLE_GHOSTPDL=ON
+
+cmake --build build -j"$(nproc)"
+./build/bin/rpcemu-recompiler
 ```
 
-### 3. Build
+### CMake options
 
-In the same **MSYS2 MinGW 64-bit** terminal:
+| Option | Default | Description |
+| --- | --- | --- |
+| `RPCEMU_DYNAREC` | ON | Link the ARM-to-x86 dynarec (x86 hosts only) |
+| `RPCEMU_ENABLE_VNC` | ON | VNC server support (requires libvncserver) |
+| `RPCEMU_ENABLE_GHOSTPDL` | ON | Link against Ghostscript/GhostPDL for in-process PDF conversion |
+| `RPCEMU_ENABLE_WARNINGS` | ON | Extra compiler warnings (`-Wall -Wextra -Werror=switch`) |
+
+Interpreter build:
 
 ```bash
-# Navigate to the RPCEmu source directory (adjust path as needed)
-cd /c/Users/YourName/path/to/RPCEmu/src/qt5
-
-# Generate Makefile
-qmake rpcemu.pro
-
-# Compile
-mingw32-make
+cmake -S . -B build -DRPCEMU_DYNAREC=OFF
+cmake --build build -j"$(nproc)"
 ```
 
-### 4. Run
+Debug build:
 
-You can run the executable directly from the terminal or usually from Windows Explorer, provided all necessary DLLs are in the path.
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
+cmake --build build -j"$(nproc)"
+```
+
+On **arm64** hosts (e.g. Raspberry Pi), use `--interpreter` or `-DRPCEMU_DYNAREC=OFF`
+because the dynarec JIT targets x86 hosts.
+
+Further detail: [docs/dynarec.md](docs/dynarec.md).
 
 ---
 
-## Windows (Cross-Compilation from Linux)
+## GhostPDL / Ghostscript (in-process PDF conversion)
 
-This method allows you to build Windows executables (`.exe`) entirely from a Linux environment using **MXE (M Cross Environment)**.
+When `libgs-dev` is present at configure time, RPCEmu links against `libgs` and can
+convert captured PostScript `.prn` files to PDF without external tools. Enable **Also
+create PDF files** in *Settings → Parallel Port*.
 
-### 1. Prerequisites (Debian/Ubuntu)
-
-Use standard apt packages to install the build tools required to compile MXE itself.
-
-```bash
-sudo apt-get update
-sudo apt-get install autoconf automake autopoint bash bison build-essential \
-    bzip2 cmake flex g++ g++-multilib gettext git gperf intltool \
-    libc6-dev-i386 libffi-dev libgdk-pixbuf2.0-dev libltdl-dev libssl-dev \
-    libtool-bin libxml-parser-perl lzip make openssl p7zip-full patch perl \
-    pkg-config python3 ruby scons sed unzip wget xz-utils
-```
-
-### 2. Install MXE
-
-MXE builds standard Windows binaries (MinGW).
-
-1.  **Clone MXE to `/opt`:**
-    ```bash
-    sudo git clone https://github.com/mxe/mxe.git /opt/mxe
-    # Optional: Change ownership to yourself
-    sudo chown -R $USER:$USER /opt/mxe
-    ```
-
-2.  **Build Qt5 (This takes a long time - hours):**
-    This builds the cross-compiler and Qt library for Windows (32-bit).
-    ```bash
-    cd /opt/mxe
-    make MXE_TARGETS='i686-w64-mingw32.static' qtbase qtmultimedia
-    ```
-
-3.  **Add to PATH:**
-    ```bash
-    export PATH=/opt/mxe/usr/bin:$PATH
-    ```
-
-### 3. Build RPCEmu
-
-Once MXE is ready, build RPCEmu using the MXE-specific wrapper scripts:
+For PCL/XPS print jobs, install full GhostPDL and point the build at it:
 
 ```bash
-# Navigate to src/qt5
-cd src/qt5
-
-# Run MXE qmake (32-bit Windows target)
-/opt/mxe/usr/bin/i686-w64-mingw32.static-qmake-qt5 rpcemu.pro
-
-# Compile
-make
+export GHOSTPDL_PREFIX=/opt/ghostpdl
+./build.sh
 ```
-
-### 4. Verify
-
-The resulting files will be `release/rpcemu-recompiler.exe` (or similar). You can copy these to a Windows machine to run them.
 
 ---
 
-## macOS
+## Rebuilding podule ROMs
 
-*Build instructions for macOS are currently experimental. Standard Qt 5 build procedures (`qmake`, `make`) should work provided dependencies are installed via Homebrew.*
+```bash
+./setup-build-env.sh --podules
+./build.sh --podules
+```
+
+Requires `arm-linux-gnueabi-as` and related binutils.
+
+---
+
+## Continuous integration and releases
+
+GitHub Actions builds on every push/PR to `main`. Push a version tag (e.g. `v1.0.0`)
+to publish a GitHub Release with the Linux tarball. Update `VERSION` before tagging.
+
+---
+
+## Troubleshooting builds
+
+| Problem | Remedy |
+| --- | --- |
+| `cmake not found` | Run `./setup-build-env.sh` |
+| wxWidgets not found | Install `libwxgtk3.2-dev` |
+| VNC build fails | Install `libvncserver-dev`, or `-DRPCEMU_ENABLE_VNC=OFF` |
+| Ghostscript not detected | Install `libgs-dev`, or `-DRPCEMU_ENABLE_GHOSTPDL=OFF` |
+| Dynarec fails on arm64 | Use `./build.sh --interpreter` |
+
+---
+
+## Runtime troubleshooting
+
+| Problem | Remedy |
+| --- | --- |
+| Emulator cannot find configs/ROMs | Run from the project root or a staged release directory |
+| No audio | Ensure PulseAudio or PipeWire is running (SDL2) |
+| No network | Confirm NAT is selected in machine settings; SLiRP is always enabled on Linux |
+| No VNC menu item | Rebuild with `libvncserver-dev` installed |
+| Log file | Check `rpclog.txt` in the data directory |

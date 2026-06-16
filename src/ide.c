@@ -28,6 +28,7 @@ void callbackide(void);
 #include <errno.h>
 #include <inttypes.h>
 #include <stdio.h>
+#include <string.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -38,6 +39,7 @@ void callbackide(void);
 #include "mem.h"
 #include "iomd.h"
 #include "ide.h"
+#include "cmos.h"
 #include "arm.h"
 
 /* Bits of 'atastat' */
@@ -45,10 +47,12 @@ void callbackide(void);
 #define DRQ_STAT		0x08 /* Data request */
 #define READY_STAT		0x40
 #define BUSY_STAT		0x80
+#define DRQ_READY_STAT		(DRQ_STAT | READY_STAT)
 
 /* Bits of 'error' */
 #define ABRT_ERR		0x04 /* Command aborted */
 #define MCR_ERR			0x08 /* Media change request */
+#define IDNF_ERR		0x10 /* ID not found / invalid sector */
 
 /* ATA Commands */
 #define WIN_SRST			0x08 /* ATAPI Device Reset */
@@ -64,6 +68,12 @@ void callbackide(void);
 #define WIN_PIDENTIFY			0xA1 /* Identify ATAPI device */
 #define WIN_SETIDLE1			0xE3
 #define WIN_IDENTIFY			0xEC /* Ask drive to identify itself */
+#define WIN_SETMULT			0xC6 /* Set multiple mode */
+#define WIN_SETFEATURES			0xEF /* Set features */
+#define WIN_STANDBY			0xE0 /* Standby immediate */
+#define WIN_IDLEIMMEDIATE		0xE1 /* Idle immediate */
+#define WIN_CHECKPOWER			0xE5 /* Check power mode */
+#define WIN_READ_NATIVE_MAX		0xF8 /* Read native max address */
 
 /* ATAPI Commands */
 #define GPCMD_INQUIRY			0x12
@@ -111,6 +121,7 @@ int idecallback = 0;
 
 static void callreadcd(void);
 static void atapicommand(void);
+static void ide_next_sector(void);
 
 static struct
 {
@@ -128,10 +139,72 @@ static struct
         int discchanged;
         int reset;
         FILE *hdfile[2];
+        off64_t hd_filesize[2];
         int skip512[2];
         int lba_cmd[2];
         uint16_t buffer[65536];
 } ide;
+
+static void
+ide_run_callback(void)
+{
+	idecallback = 0;
+	callbackide();
+}
+
+static inline void
+ide_read_complete(void)
+{
+	ide.pos = 0;
+	ide.atastat = READY_STAT;
+	if (ide.command == WIN_READ) {
+		ide.secount--;
+		if (ide.secount) {
+			ide_next_sector();
+			ide.atastat = BUSY_STAT;
+			ide_run_callback();
+		}
+	}
+}
+
+static inline void
+ide_write_complete(void)
+{
+	ide.pos = 0;
+	ide.atastat = BUSY_STAT;
+	ide_run_callback();
+}
+
+/** ATA post-reset task-file values expected by RISC OS after SRST. */
+static void
+ide_apply_post_reset_signature(void)
+{
+	ide.atastat = READY_STAT;
+	ide.error = 0x01; /* Diagnostic code: device passed */
+	ide.secount = 1;
+	ide.sector = 1;
+	ide.cylinder = 0;
+	ide.head = 0;
+	ide.command = 0;
+	ide.pos = 0;
+	ide.reset = 0;
+	ide.packetstatus = 0;
+	ide.packlen = 0;
+	ide.cdlen = ide.cdpos = 0;
+	memset(ide.buffer, 0, 512);
+}
+
+static void
+ide_reset_controller_state(void)
+{
+	ide.drive = 0;
+	ide.fdisk = 0;
+	ide.cylprecomp = 0;
+	ide.lba_cmd[0] = ide.lba_cmd[1] = 0;
+	ide.discchanged = 0;
+	ide.asc = 0;
+	ide_apply_post_reset_signature();
+}
 
 static inline void
 ide_irq_raise(void)
@@ -145,6 +218,29 @@ ide_irq_lower(void)
 {
 	iomd.irqb.status &= ~IOMD_IRQB_IDE;
 	updateirqs();
+}
+
+static inline int
+ide_drive_is_hdd(int drive)
+{
+	return ide.hdfile[drive] != NULL && !(config.cdromenabled && drive == 1);
+}
+
+static off64_t
+ide_hd_logical_sectors(int drive)
+{
+	if (!ide_drive_is_hdd(drive)) {
+		return 0;
+	}
+	return (ide.hd_filesize[drive] / 512) - ide.skip512[drive];
+}
+
+static void
+ide_media_error_idnf(void)
+{
+	ide.atastat = READY_STAT | ERR_STAT;
+	ide.error = IDNF_ERR;
+	ide_irq_raise();
 }
 
 void
@@ -244,19 +340,54 @@ ide_padstr8(uint8_t *buf, int buf_size, const char *src)
  * Fill in ide.buffer with the output of the "IDENTIFY DEVICE" command
  */
 static void
-ide_identify(void)
+ide_identify(int drive)
 {
+	uint32_t sectors;
+	const int spt = ide.spt[drive];
+	const int hpc = ide.hpc[drive];
+
 	memset(ide.buffer, 0, 512);
 
-	//ide.buffer[1] = 101; /* Cylinders */
+	sectors = (uint32_t) ide_hd_logical_sectors(drive);
+	if (sectors > 0x0FFFFFFFU) {
+		sectors = 0x0FFFFFFFU;
+	}
+
+	/* Word 0: fixed ATA device */
+	ide.buffer[0] = 0x0040;
+	/* Legacy CHS translation geometry */
 	ide.buffer[1] = 65535; /* Cylinders */
-	ide.buffer[3] = 16;  /* Heads */
-	ide.buffer[6] = 63;  /* Sectors */
+	ide.buffer[3] = hpc;   /* Heads */
+	ide.buffer[6] = spt;   /* Sectors per track */
 	ide_padstr((char *) (ide.buffer + 10), "", 20); /* Serial Number */
 	ide_padstr((char *) (ide.buffer + 23), "v1.0", 8); /* Firmware */
 	ide_padstr((char *) (ide.buffer + 27), "RPCEmuHD", 40); /* Model */
-//	ide.buffer[49] = 0x200; /* LBA supported */
-	ide.buffer[50] = 0x4000; /* Capabilities */
+	/* Capabilities: LBA supported (bit 9) */
+	ide.buffer[49] = 0x2f00;
+	ide.buffer[50] = 0x4000; /* Capabilities (bit 14 set per ATA spec) */
+	/* Validity bits for words 54-70 and 88 */
+	ide.buffer[53] = 0x0007;
+	ide.buffer[54] = hpc;
+	ide.buffer[55] = 0; /* Current cylinders - translation */
+	ide.buffer[56] = spt;
+	ide.buffer[57] = (uint16_t) (sectors & 0xFFFF);
+	ide.buffer[58] = (uint16_t) ((sectors >> 16) & 0xFFFF);
+	/* Current and total addressable sectors in LBA mode (28-bit) */
+	ide.buffer[60] = (uint16_t) (sectors & 0xFFFF);
+	ide.buffer[61] = (uint16_t) ((sectors >> 16) & 0xFFFF);
+	/* ATA version and command-set support (expected by RISC OS 5 ADFS) */
+	ide.buffer[80] = 0x007E;
+	ide.buffer[81] = 0x0026;
+	ide.buffer[83] = 0x7400;
+	ide.buffer[84] = 0x7400;
+	ide.buffer[85] = 0x7400;
+	ide.buffer[86] = 0x7400;
+	ide.buffer[88] = 0x0020;
+	/* 48-bit capacity (low 32 bits; sufficient for images under 128 GiB) */
+	ide.buffer[100] = (uint16_t) (sectors & 0xFFFF);
+	ide.buffer[101] = (uint16_t) ((sectors >> 16) & 0xFFFF);
+	ide.buffer[102] = 0;
+	ide.buffer[103] = 0;
 }
 
 /**
@@ -327,24 +458,41 @@ ide_atapi_mode_sense(uint32_t pos)
 }
 
 /**
- * Return the sector offset for the current register values
+ * Return the logical block address from the current register values
+ * (CHS or 28-bit LBA, without any image boot-block offset).
+ */
+static uint32_t
+ide_get_lba_address(void)
+{
+	if (ide.lba_cmd[ide.drive]) {
+		/* ATA-3: head bits 27:24, cylinder bits 23:8, sector bits 7:0 */
+		return (uint32_t) ((ide.head << 24) | (ide.cylinder << 8) | ide.sector);
+	}
+
+	const int heads = ide.hpc[ide.drive];
+	const int sectors = ide.spt[ide.drive];
+
+	return (uint32_t) ((((off64_t) ide.cylinder * heads) + ide.head) *
+	    sectors) + (ide.sector - 1);
+}
+
+/**
+ * Return the sector index used to locate data in the host image file.
+ * Images with a 512-byte RISC OS boot block at offset 0 skip one sector.
  */
 static off64_t
 ide_get_sector(void)
 {
-	if (ide.lba_cmd[ide.drive] && !ide.skip512[ide.drive]) {
-		// LBA Addressing
-		// from ATA-3 head is bits 27:24, cyl is 23:8, sec is 7:0
-		return (off64_t) ((ide.head << 24) | (ide.cylinder << 8) | ide.sector);
-	} else {
-		// CHS Addressing
-		const int heads = ide.hpc[ide.drive];
-		const int sectors = ide.spt[ide.drive];
-		const int skip = ide.skip512[ide.drive];
+	return (off64_t) ide_get_lba_address() + ide.skip512[ide.drive];
+}
 
-		return ((((off64_t) ide.cylinder * heads) + ide.head) *
-		    sectors) + (ide.sector - 1) + skip;
+static int
+ide_sector_byte_offset_valid(off64_t byte_offset)
+{
+	if (!ide_drive_is_hdd(ide.drive)) {
+		return 0;
 	}
+	return byte_offset >= 0 && byte_offset + 512 <= ide.hd_filesize[ide.drive];
 }
 
 /**
@@ -353,15 +501,12 @@ ide_get_sector(void)
 static void
 ide_next_sector(void)
 {
-	if (ide.lba_cmd[ide.drive] && !ide.skip512[ide.drive]) {
-		// LBA Addressing
-		uint32_t lba = (ide.head << 24) | (ide.cylinder << 8) | ide.sector;
-		lba++;
+	if (ide.lba_cmd[ide.drive]) {
+		uint32_t lba = ide_get_lba_address() + 1;
 		ide.head = (lba >> 24) & 0xf;
 		ide.cylinder = (lba >> 8) & 0xffff;
 		ide.sector = lba & 0xff;
 	} else {
-		// CHS Addressing
 		ide.sector++;
 		if (ide.sector == (ide.spt[ide.drive] + 1)) {
 			ide.sector = 1;
@@ -419,51 +564,128 @@ ide_image_set_spt_hpc_skip512(FILE *fh, int d)
 	    d, log2_sec_size, ide.spt[d], ide.hpc[d]);
 }
 
+static int
+path_is_absolute(const char *path)
+{
+	if (path == NULL || path[0] == '\0') {
+		return 0;
+	}
+	if (path[0] == '/' || path[0] == '\\') {
+		return 1;
+	}
+	if (strncmp(path, "./", 2) == 0) {
+		return 1;
+	}
+	/* Drive letter path (harmless on Linux; useful for imported configs) */
+	if (((path[0] >= 'A' && path[0] <= 'Z') || (path[0] >= 'a' && path[0] <= 'z'))
+	    && path[1] == ':') {
+		return 1;
+	}
+	return 0;
+}
+
+static void
+resolve_hd_path(const char *filename, char *pathname, size_t pathname_size)
+{
+	if (path_is_absolute(filename)) {
+		snprintf(pathname, pathname_size, "%s", filename);
+		return;
+	}
+
+	snprintf(pathname, pathname_size, "%s%s", rpcemu_get_datadir(), filename);
+}
+
 /**
  * Prepare a hard disc image, open the file and attach it to the IDE device
  *
  * @param d drive number 0 or 1
- * @param filename file containing HD image (relative to datadir)
+ * @param filename path to HD image (absolute, or relative to datadir)
  */
 static void
 loadhd(int d, const char *filename)
 {
 	char pathname[512];
 
-	snprintf(pathname, sizeof(pathname), "%s%s", rpcemu_get_datadir(), filename);
+	if (filename == NULL || filename[0] == '\0') {
+		return;
+	}
+
+	resolve_hd_path(filename, pathname, sizeof(pathname));
 
 	if (ide.hdfile[d] == NULL) {
-		/* Try to open existing hard disk image */
 		ide.hdfile[d] = fopen64(pathname, "rb+");
 		if (ide.hdfile[d] == NULL) {
-			/* Failed to open existing hard disk image */
 			if (errno == ENOENT) {
-				/* Failed because it does not exist,
-				   so try to create new file */
-				ide.hdfile[d] = fopen64(pathname, "wb+");
-				if (ide.hdfile[d] == NULL) {
-					fatal("Cannot create file '%s': %s",
-					      pathname, strerror(errno));
-				}
-			} else {
-				/* Failed for another reason */
-				fatal("Cannot open file '%s': %s",
-				      pathname, strerror(errno));
+				rpclog("IDE: No hard disc image '%s' (drive %d) - skipping\n",
+				       pathname, d);
+				return;
 			}
+			error("Cannot open hard disc image '%s': %s",
+			      pathname, strerror(errno));
+			return;
 		}
 	}
 
 	fseeko64(ide.hdfile[d], 0, SEEK_END);
 	const off64_t filesize = ftello64(ide.hdfile[d]);
 
+	if (filesize == 0) {
+		fclose(ide.hdfile[d]);
+		ide.hdfile[d] = NULL;
+		rpclog("IDE: Skipping empty hard disc image '%s' (drive %d) - "
+		       "create or copy a disc image and reset\n",
+		       pathname, d);
+		return;
+	}
+
+	ide.hd_filesize[d] = filesize;
 	ide_image_set_spt_hpc_skip512(ide.hdfile[d], d);
 
-	rpclog("IDE: Loaded file '%s' as IDE disc %d, size %" PRId64 " MB (%" PRId64 ")%s\n",
+	rpclog("IDE: Loaded file '%s' as IDE disc %d, size %" PRId64 " MB (%" PRId64
+	       "), %" PRId64 " logical sectors%s\n",
 		filename,
 		d,
 		(int64_t) filesize / 1024 / 1024,
 		(int64_t) filesize,
-		ide.skip512[d] ? ", BUG 512b Skip enabled" : "");
+		(int64_t) ide_hd_logical_sectors(d),
+		ide.skip512[d] ? ", 512-byte boot block at start" : "");
+}
+
+static void
+ide_log_drive_summary(void)
+{
+	for (int d = 0; d < 2; d++) {
+		if (ide_drive_is_hdd(d)) {
+			rpclog("IDE: Drive %d attached, %" PRId64 " logical sectors (%" PRId64 " bytes)\n",
+			       d,
+			       (int64_t) ide_hd_logical_sectors(d),
+			       (int64_t) ide.hd_filesize[d]);
+		} else if (config.cdromenabled && d == 1) {
+			rpclog("IDE: Drive %d CD-ROM (HD5 unavailable)\n", d);
+		} else {
+			rpclog("IDE: Drive %d not present\n", d);
+		}
+	}
+}
+
+int
+ide_attached_hdd_count(void)
+{
+	int count = 0;
+
+	for (int d = 0; d < 2; d++) {
+		if (ide_drive_is_hdd(d)) {
+			count++;
+		}
+	}
+	return count;
+}
+
+void
+ide_reload_images(void)
+{
+	resetide();
+	cmos_sync_ide_drive_count();
 }
 
 void resetide(void)
@@ -477,26 +699,33 @@ void resetide(void)
                         fclose(ide.hdfile[d]);
                         ide.hdfile[d] = NULL;
                 }
+                ide.hd_filesize[d] = 0;
         }
 
-        ide.atastat = READY_STAT;
+	ide_reset_controller_state();
         idecallback = 0;
 
-	/* Load HD4: Use config override path if set, otherwise use machine directory */
-	if (config.hd4_path[0] != '\0' && config.hd4_path[0] == '/') {
-		/* Absolute path specified in config - use it directly */
-		loadhd(0, config.hd4_path);
+	/* Load HD4: optional override in config, otherwise machine directory */
+	if (config.hd4_path[0] != '\0') {
+		if (path_is_absolute(config.hd4_path)) {
+			loadhd(0, config.hd4_path);
+		} else {
+			snprintf(hd_path, sizeof(hd_path), "%s%s",
+			         rpcemu_get_machine_datadir(), config.hd4_path);
+			loadhd(0, hd_path);
+		}
 	} else {
-		/* Use machine-specific directory */
 		snprintf(hd_path, sizeof(hd_path), "%shd4.hdf", rpcemu_get_machine_datadir());
 		loadhd(0, hd_path);
 	}
 
-	/* Load HD5: Only if CD-ROM is disabled */
+	/* Load HD5: only when CD-ROM is disabled */
 	if (!config.cdromenabled) {
 		snprintf(hd_path, sizeof(hd_path), "%shd5.hdf", rpcemu_get_machine_datadir());
 		loadhd(1, hd_path);
 	}
+
+	ide_log_drive_summary();
 }
 
 void writeidew(uint16_t val)
@@ -529,10 +758,7 @@ void writeidew(uint16_t val)
         }
         else if (ide.pos>=512)
         {
-                ide.pos=0;
-                ide.atastat = BUSY_STAT;
-                idecallback=0;
-                callbackide();
+                ide_write_complete();
         }
 }
 
@@ -546,9 +772,7 @@ void writeide(uint16_t addr, uint8_t val)
                 idebufferb[ide.pos++]=val;
                 if (ide.pos>=512)
                 {
-                        ide.pos=0;
-                        ide.atastat = BUSY_STAT;
-                        idecallback=1000;
+                        ide_write_complete();
                 }
                 return;
 
@@ -605,6 +829,9 @@ void writeide(uint16_t addr, uint8_t val)
         case 0x1F7: /* Command register */
                 ide.command=val;
                 ide.error=0;
+                rpclog("IDE: command %02X drive %d%s\n",
+                       val, ide.drive,
+                       ide_drive_is_hdd(ide.drive) ? "" : " (no HDD image)");
                 switch (val)
                 {
                 case WIN_SRST: /* ATAPI Device Reset */
@@ -619,40 +846,25 @@ void writeide(uint16_t addr, uint8_t val)
                         return;
 
                 case WIN_READ:
+                case WIN_VERIFY:
+                case WIN_FORMAT:
+                case WIN_SPECIFY: /* Initialize Drive Parameters */
+                case WIN_PIDENTIFY: /* Identify Packet Device */
+                case WIN_SETIDLE1: /* Idle */
+                case WIN_IDENTIFY: /* Identify Device */
+                case WIN_SETFEATURES:
+                case WIN_STANDBY:
+                case WIN_IDLEIMMEDIATE:
+                case WIN_CHECKPOWER:
+                case WIN_SETMULT:
+                case WIN_READ_NATIVE_MAX:
                         ide.atastat = BUSY_STAT;
-                        idecallback=200;
+                        ide_run_callback();
                         return;
 
                 case WIN_WRITE:
-                        ide.atastat = DRQ_STAT;
+                        ide.atastat = DRQ_READY_STAT;
                         ide.pos=0;
-                        return;
-
-                case WIN_VERIFY:
-                        ide.atastat = BUSY_STAT;
-                        idecallback=200;
-                        return;
-
-                case WIN_FORMAT:
-                        ide.atastat = DRQ_STAT;
-//                        idecallback=200;
-                        ide.pos=0;
-                        return;
-
-                case WIN_SPECIFY: /* Initialize Drive Parameters */
-                        ide.atastat = BUSY_STAT;
-                        idecallback=200;
-                        return;
-
-                case WIN_PIDENTIFY: /* Identify Packet Device */
-                case WIN_SETIDLE1: /* Idle */
-                        ide.atastat = BUSY_STAT;
-                        idecallback=200;
-                        return;
-
-                case WIN_IDENTIFY: /* Identify Device */
-                        ide.atastat = BUSY_STAT;
-                        idecallback=200;
                         return;
 
                 case WIN_PACKETCMD: /* ATAPI Packet */
@@ -662,7 +874,10 @@ void writeide(uint16_t addr, uint8_t val)
                         ide.pos=0;
                         return;
                 }
-                fatal("Bad IDE command %02X\n", val);
+                rpclog("IDE: unimplemented command %02X\n", val);
+                ide.atastat = READY_STAT | ERR_STAT;
+                ide.error = ABRT_ERR;
+                ide_irq_raise();
                 return;
 
         case 0x3F6: /* Device control */
@@ -692,9 +907,7 @@ uint8_t readide(uint16_t addr)
 //                rpclog("%04X\n",temp);
                 if (ide.pos>=512)
                 {
-                        ide.pos=0;
-                        ide.atastat = READY_STAT;
-//                        rpclog("End of transfer\n");
+                        ide_read_complete();
                 }
                 return temp;
 
@@ -714,13 +927,20 @@ uint8_t readide(uint16_t addr)
                 return (uint8_t)(ide.cylinder>>8);
 
         case 0x1F6: /* Drive/Head */
-                return (uint8_t)(ide.head|(ide.drive<<4));
+                return (uint8_t) (0xA0 | (ide.drive << 4) |
+                    (ide.lba_cmd[ide.drive] ? 0x40 : 0) | (ide.head & 0x0F));
 
         case 0x1F7: /* Status */
                 ide_irq_lower();
+                if (!ide_drive_is_hdd(ide.drive) && !IDE_DRIVE_IS_CDROM(ide)) {
+                        return 0x00; /* No device selected / not present */
+                }
                 return ide.atastat;
 
         case 0x3F6: /* Alternate Status */
+                if (!ide_drive_is_hdd(ide.drive) && !IDE_DRIVE_IS_CDROM(ide)) {
+                        return 0x00;
+                }
                 return ide.atastat;
         }
 	//fatal("Bad IDE read %04X\n", addr);
@@ -755,8 +975,7 @@ uint16_t readidew(void)
                                 {
                                         ide_next_sector();
                                         ide.atastat = BUSY_STAT;
-                                        idecallback=0;
-                                        callbackide();
+                                        ide_run_callback();
                                 }
                         }
                 }
@@ -770,14 +989,8 @@ void callbackide(void)
         int c;
         if (ide.reset)
         {
-                ide.atastat = READY_STAT;
-                ide.error=0;
-                ide.secount=1;
-                ide.sector=1;
-                ide.head=0;
-                ide.cylinder=0;
-                ide.reset = 0;
-//                rpclog("Reset callback\n");
+                ide_apply_post_reset_signature();
+                ide_irq_raise();
                 return;
         }
         switch (ide.command)
@@ -803,19 +1016,58 @@ void callbackide(void)
                 ide_irq_raise();
                 return;
 
+        case WIN_SETFEATURES:
+        case WIN_STANDBY:
+        case WIN_IDLEIMMEDIATE:
+        case WIN_CHECKPOWER:
+        case WIN_SETMULT:
+                if (IDE_DRIVE_IS_CDROM(ide)) {
+                        goto abort_cmd;
+                }
+                if (!ide_drive_is_hdd(ide.drive)) {
+                        goto abort_cmd;
+                }
+                ide.atastat = READY_STAT;
+                ide_irq_raise();
+                return;
+
+        case WIN_READ_NATIVE_MAX:
+                if (IDE_DRIVE_IS_CDROM(ide)) {
+                        goto abort_cmd;
+                }
+                if (!ide_drive_is_hdd(ide.drive)) {
+                        goto abort_cmd;
+                }
+                {
+                        uint32_t max_lba = (uint32_t) ide_hd_logical_sectors(ide.drive);
+                        if (max_lba > 0) {
+                                max_lba--;
+                        }
+                        ide.sector = max_lba & 0xff;
+                        ide.cylinder = (max_lba >> 8) & 0xffff;
+                        ide.head = (max_lba >> 24) & 0x0f;
+                }
+                ide.atastat = READY_STAT;
+                ide_irq_raise();
+                return;
+
         case WIN_READ:
                 if (IDE_DRIVE_IS_CDROM(ide)) {
                         goto abort_cmd;
                 }
                 ide_activity_increment();
                 addr = ide_get_sector() * 512;
+                if (!ide_sector_byte_offset_valid(addr)) {
+                        ide_media_error_idnf();
+                        return;
+                }
                 fseeko64(ide.hdfile[ide.drive], addr, SEEK_SET);
                 if (fread(ide.buffer, 1, 512, ide.hdfile[ide.drive]) != 512) {
-                        // Beyond current extent of file - return zero data
-                        memset(ide.buffer, 0, 512);
+                        ide_media_error_idnf();
+                        return;
                 }
                 ide.pos=0;
-                ide.atastat = DRQ_STAT;
+                ide.atastat = DRQ_READY_STAT;
                 ide_irq_raise();
                 return;
 
@@ -825,12 +1077,16 @@ void callbackide(void)
                 }
                 ide_activity_increment();
                 addr = ide_get_sector() * 512;
+                if (!ide_sector_byte_offset_valid(addr)) {
+                        ide_media_error_idnf();
+                        return;
+                }
                 fseeko64(ide.hdfile[ide.drive], addr, SEEK_SET);
                 fwrite(ide.buffer, 512, 1, ide.hdfile[ide.drive]);
                 ide_irq_raise();
                 ide.secount--;
                 if (ide.secount != 0) {
-                        ide.atastat = DRQ_STAT;
+                        ide.atastat = DRQ_READY_STAT;
                         ide.pos=0;
                         ide_next_sector();
                 } else {
@@ -842,7 +1098,24 @@ void callbackide(void)
                 if (IDE_DRIVE_IS_CDROM(ide)) {
                         goto abort_cmd;
                 }
-                ide.pos=0;
+                addr = ide_get_sector() * 512;
+                if (!ide_sector_byte_offset_valid(addr)) {
+                        ide_media_error_idnf();
+                        return;
+                }
+                fseeko64(ide.hdfile[ide.drive], addr, SEEK_SET);
+                if (fread(ide.buffer, 1, 512, ide.hdfile[ide.drive]) != 512) {
+                        ide_media_error_idnf();
+                        return;
+                }
+                ide.secount--;
+                if (ide.secount != 0) {
+                        ide_next_sector();
+                        ide.atastat = BUSY_STAT;
+                        idecallback = 200;
+                        return;
+                }
+                ide.pos = 0;
                 ide.atastat = READY_STAT;
                 ide_irq_raise();
                 return;
@@ -852,6 +1125,10 @@ void callbackide(void)
                         goto abort_cmd;
                 }
                 addr = ide_get_sector() * 512;
+                if (!ide_sector_byte_offset_valid(addr)) {
+                        ide_media_error_idnf();
+                        return;
+                }
                 fseeko64(ide.hdfile[ide.drive], addr, SEEK_SET);
                 memset(ide.buffer, 0, 512);
                 for (c=0;c<ide.secount;c++)
@@ -877,7 +1154,7 @@ void callbackide(void)
                         ide_atapi_identify();
                         ide.pos=0;
                         ide.error=0;
-                        ide.atastat = DRQ_STAT;
+                        ide.atastat = DRQ_READY_STAT;
                         ide_irq_raise();
                         return;
                 }
@@ -894,9 +1171,12 @@ void callbackide(void)
                         ide.drive=ide.head=0;
                         goto abort_cmd;
                 }
-                ide_identify();
+                if (!ide_drive_is_hdd(ide.drive)) {
+                        goto abort_cmd;
+                }
+                ide_identify(ide.drive);
                 ide.pos=0;
-                ide.atastat = DRQ_STAT;
+                ide.atastat = DRQ_READY_STAT;
                 ide_irq_raise();
                 return;
 
@@ -906,7 +1186,7 @@ void callbackide(void)
                 {
                         ide.pos=0;
                         ide.error=(uint8_t)((ide.secount&0xF8)|1);
-                        ide.atastat = DRQ_STAT;
+                        ide.atastat = DRQ_READY_STAT;
                         ide_irq_raise();
 //                        rpclog("Preparing to recieve packet max DRQ count %04X\n",ide.cylinder);
                 }
@@ -923,14 +1203,14 @@ void callbackide(void)
                 }
                 else if (ide.packetstatus==3)
                 {
-                        ide.atastat = DRQ_STAT;
+                        ide.atastat = DRQ_READY_STAT;
 //                        rpclog("Recieve data packet!\n");
                         ide_irq_raise();
                         ide.packetstatus=0xFF;
                 }
                 else if (ide.packetstatus==4)
                 {
-                        ide.atastat = DRQ_STAT;
+                        ide.atastat = DRQ_READY_STAT;
 //                        rpclog("Send data packet!\n");
                         ide_irq_raise();
 //                        ide.packetstatus=5;
@@ -943,7 +1223,7 @@ void callbackide(void)
                 }
                 else if (ide.packetstatus==6) /*READ CD callback*/
                 {
-                        ide.atastat = DRQ_STAT;
+                        ide.atastat = DRQ_READY_STAT;
 //                        rpclog("Recieve data packet 6!\n");
                         ide_irq_raise();
 //                        ide.packetstatus=0xFF;
@@ -963,11 +1243,8 @@ abort_cmd:
 }
 
 /*ATAPI CD-ROM emulation
-  This mostly seems to work. It is implemented only on Windows at the moment as
-  I haven't had time to implement any interfaces for it in the generic gui.
-  It mostly depends on driver files - cdrom-iso.c for ISO image files (in theory
-  on any platform) and cdrom-ioctl.c for Win32 IOCTL access. There's an ATAPI
-  interface defined in ide.h.
+  Depends on driver files — cdrom-iso.c for ISO images and cdrom-ioctl.c
+  for host drive access. There is an ATAPI interface defined in ide.h.
   There are a couple of bugs in the CD audio handling.
   */
 
@@ -1052,7 +1329,7 @@ static void atapicommand(void)
         ide.packetstatus=3;
         ide.cylinder=len;
         ide.secount=2;
-//        ide.atastat = DRQ_STAT;
+//        ide.atastat = DRQ_READY_STAT;
         ide.pos=0;
                 idecallback=60;
                 ide.packlen=len;
@@ -1145,7 +1422,7 @@ static void atapicommand(void)
         ide.packetstatus=3;
         ide.cylinder=len;
         ide.secount=2;
-//        ide.atastat = DRQ_STAT;
+//        ide.atastat = DRQ_READY_STAT;
         ide.pos=0;
                 idecallback=60;
                 ide.packlen=len;

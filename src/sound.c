@@ -56,6 +56,9 @@ sound_init(void)
 
 	/* Call the platform specific code to start the audio playing */
 	plt_sound_init(BUFFERLENBYTES);
+	if (config.soundenabled) {
+		plt_sound_restart();
+	}
 }
 
 /**

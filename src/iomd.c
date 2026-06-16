@@ -334,6 +334,9 @@ iomd_write(uint32_t addr, uint32_t val)
                 updateirqs();
                 return;
         case IOMD_0x018_IRQMSKA: /* IRQA mask */
+                if (val != iomd.irqa.mask) {
+                        rpclog("IOMD: IRQA mask = 0x%02x (was 0x%02x)\n", val, iomd.irqa.mask);
+                }
                 iomd.irqa.mask = val;
                 updateirqs();
                 return;
@@ -347,12 +350,20 @@ iomd_write(uint32_t addr, uint32_t val)
 		return;
 
         case IOMD_0x028_IRQMSKB: /* IRQB mask */
+                if (val != iomd.irqb.mask) {
+                        rpclog("IOMD: IRQB mask = 0x%02x (was 0x%02x)\n", val, iomd.irqb.mask);
+                }
                 iomd.irqb.mask = val;
                 updateirqs();
                 return;
 
         case IOMD_0x038_FIQMSK: /* FIQ mask */
+                if (val != iomd.fiq.mask) {
+                        rpclog("IOMD: FIQ mask = 0x%02x (was 0x%02x) serial_bit=%d\n",
+                               val, iomd.fiq.mask, (val & IOMD_FIQ_SERIAL) ? 1 : 0);
+                }
                 iomd.fiq.mask = val;
+                updateirqs();
                 return;
 
 	case IOMD_0x03C_CLKCTL: /* Clock divider control (ARM7500/FE) */
@@ -905,7 +916,7 @@ iomd_reset(IOMDType type)
         iomd.irqdma.mask = 0;
 
 	/* Investigate further */
-	// iomd.ctrl = 0x0b; /* I/O Control, ID and I2C pins set as input */
+	iomd.ctrl = 0x10; /* I/O Control: enable serial FIQ routing (TRM bit 4) */
 
 	/* The bottom 4 bits of these fields should be always 0 */
 	iomd.vidcur   = 0;

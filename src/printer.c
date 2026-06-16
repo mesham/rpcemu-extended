@@ -35,13 +35,20 @@
 #include <string.h>
 #include <time.h>
 #include <stdint.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 
 #include "rpcemu.h"
 #include "printer.h"
 #include "parallel.h"
+#include "print_convert.h"
 
 /* Buffer size for print data (1MB) */
 #define PRINTER_BUFFER_SIZE (1024 * 1024)
+
+/* Flush buffered data if no bytes arrive for this long (milliseconds) */
+#define PRINTER_IDLE_FLUSH_MS          500
+#define PRINTER_IDLE_FLUSH_LONG_MS     5000
 
 /* ========================================================================
  * Printer State
@@ -55,6 +62,57 @@ static size_t buffer_pos = 0;
 static int job_number = 1;
 
 static int attached_port = -1;  /* Which port we're attached to, or -1 */
+static uint64_t last_write_ms = 0;
+static uint8_t last_ctrl = PARALLEL_CTRL_INIT | PARALLEL_CTRL_SELECT;
+static int auto_pdf_enabled = 0;
+
+static int
+printer_buffer_looks_complete(void)
+{
+    static const char ps_eof[] = "%%EOF";
+    size_t eof_len = sizeof(ps_eof) - 1;
+
+    if (buffer_pos < eof_len) {
+        return 0;
+    }
+
+    if (memcmp(print_buffer, "%!PS", 4) != 0) {
+        return 0;
+    }
+
+    return (memcmp(print_buffer + buffer_pos - eof_len, ps_eof, eof_len) == 0) ? 1 : 0;
+}
+
+static uint64_t
+printer_now_ms(void)
+{
+	struct timeval tv;
+
+	gettimeofday(&tv, NULL);
+	return (uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000;
+}
+
+static const char *
+printer_effective_output_path(void)
+{
+    static char default_path[512];
+
+    if (output_path[0] != '\0') {
+        return output_path;
+    }
+
+    snprintf(default_path, sizeof(default_path), "%sprintjobs",
+             rpcemu_get_machine_datadir());
+    return default_path;
+}
+
+static void
+printer_ensure_output_dir(void)
+{
+    const char *path = printer_effective_output_path();
+
+    mkdir(path, 0777);
+}
 
 /* ========================================================================
  * Parallel Device Callbacks
@@ -85,6 +143,8 @@ printer_on_write(uint8_t data, void *userdata)
         printer_flush();
         print_buffer[buffer_pos++] = data;
     }
+
+    last_write_ms = printer_now_ms();
     
     /* Signal ACK to the host (byte accepted) */
     if (attached_port >= 0) {
@@ -99,8 +159,16 @@ static void
 printer_on_ctrl(uint8_t ctrl, void *userdata)
 {
     (void)userdata;
-    (void)ctrl;
-    /* We don't need to do anything special with control signals */
+
+    /* RISC OS drivers often leave SELECT asserted, but flush if they deselect */
+    if ((last_ctrl & PARALLEL_CTRL_SELECT) && !(ctrl & PARALLEL_CTRL_SELECT)) {
+        if (buffer_pos > 0) {
+            rpclog("Printer: Flush on deselect\n");
+            printer_flush();
+        }
+    }
+
+    last_ctrl = ctrl;
 }
 
 /**
@@ -233,13 +301,8 @@ generate_filename(char *filename, size_t size)
     tm_info = localtime(&now);
     strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", tm_info);
     
-    if (output_path[0] != '\0') {
-        snprintf(filename, size, "%s/printjob_%s_%03d.prn",
-                 output_path, timestamp, job_number);
-    } else {
-        snprintf(filename, size, "printjob_%s_%03d.prn",
-                 timestamp, job_number);
-    }
+    snprintf(filename, size, "%s/printjob_%s_%03d.prn",
+             printer_effective_output_path(), timestamp, job_number);
 }
 
 void
@@ -264,7 +327,9 @@ printer_flush(void)
     }
     
     generate_filename(filename, sizeof(filename));
-    
+
+    printer_ensure_output_dir();
+
     f = fopen(filename, "wb");
     if (f == NULL) {
         rpclog("Printer: Failed to open '%s'\n", filename);
@@ -276,6 +341,19 @@ printer_flush(void)
     fclose(f);
     
     rpclog("Printer: Wrote %zu bytes to '%s'\n", buffer_pos, filename);
+
+    if (auto_pdf_enabled && print_convert_available()) {
+        char pdf_filename[1024];
+        char errbuf[256];
+        PrintConvertResult result;
+
+        print_convert_prn_to_pdf_path(filename, pdf_filename, sizeof(pdf_filename));
+        result = print_convert_prn_to_pdf(filename, pdf_filename, errbuf, sizeof(errbuf));
+        if (result != PrintConvert_OK) {
+            rpclog("Printer: PDF conversion failed for '%s': %s\n",
+                   filename, errbuf[0] != '\0' ? errbuf : "unknown error");
+        }
+    }
     
     job_number++;
     buffer_pos = 0;
@@ -306,7 +384,8 @@ printer_set_output_path(const char *path)
     } else {
         output_path[0] = '\0';
     }
-    rpclog("Printer: Output path = '%s'\n", output_path);
+    rpclog("Printer: Output path = '%s'\n",
+           path != NULL && path[0] != '\0' ? output_path : printer_effective_output_path());
 }
 
 const char *
@@ -325,6 +404,48 @@ int
 printer_has_pending_data(void)
 {
     return (buffer_pos > 0) ? 1 : 0;
+}
+
+void
+printer_poll(void)
+{
+    uint64_t now;
+    uint64_t idle_ms;
+    uint64_t required_idle_ms;
+
+    if (buffer_pos == 0 || output_mode == PrinterOutput_Disabled ||
+        last_write_ms == 0) {
+        return;
+    }
+
+    now = printer_now_ms();
+    idle_ms = now - last_write_ms;
+
+    if (printer_buffer_looks_complete()) {
+        required_idle_ms = PRINTER_IDLE_FLUSH_MS;
+    } else {
+        required_idle_ms = PRINTER_IDLE_FLUSH_LONG_MS;
+    }
+
+    if (idle_ms >= required_idle_ms) {
+        rpclog("Printer: Flush after idle timeout (%llums, %zu bytes)\n",
+               (unsigned long long)idle_ms, buffer_pos);
+        printer_flush();
+        last_write_ms = 0;
+    }
+}
+
+void
+printer_set_auto_pdf(int enable)
+{
+    auto_pdf_enabled = (enable != 0) ? 1 : 0;
+    rpclog("Printer: Auto PDF conversion = %d\n", auto_pdf_enabled);
+}
+
+int
+printer_get_auto_pdf(void)
+{
+    return auto_pdf_enabled;
 }
 
 /* ========================================================================

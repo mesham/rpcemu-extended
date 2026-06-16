@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=RPCEmu
+Comment=Risc PC and A7000 emulator
+Exec=rpcemu-recompiler
+Path=
+Icon=applications-games
+Terminal=false
+Type=Application
+Categories=Game;Emulator;
+Keywords=RISC OS;Acorn;RiscPC;

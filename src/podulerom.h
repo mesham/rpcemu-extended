@@ -24,7 +24,6 @@
 #include <stdint.h>
 #include "podules.h"
 
-extern void initpodulerom(void);
-extern void podulerom_reset(void);
+extern void podulerom_mouse_wheel_change(int dy);
 
 #endif

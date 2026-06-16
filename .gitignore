@@ -1,0 +1,38 @@
+# Build trees
+/build/
+/build-*/
+
+# Release staging
+/releases/
+
+# Built binaries at project root
+/rpcemu-recompiler
+/rpcemu-interpreter
+/rpcemu-recompiler-debug
+/rpcemu-interpreter-debug
+/rpcemu-*
+/RPCEmu-*
+
+# Local debug / scratch
+/rpclog.txt
+/hd4.hdf
+
+# Per-machine runtime state (CMOS, HostFS, disc images) and the shared HostFS
+# drive. Generated/used at run time, not source.
+/machines/
+/shared/
+
+# Legacy single-machine state (CMOS now lives under machines/<name>/)
+/cmos.ram
+/rpc.cfg
+
+# Local tool / editor settings
+/.claude/
+
+# Editor swap files / patch leftovers
+*.swp
+*~
+*.orig
+*.rej
+*.bak
+.DS_Store

@@ -127,6 +127,9 @@ typedef enum {
     PARALLEL_PORT_COUNT
 } ParallelPortID;
 
+/* RiscPC SuperIO maps the printer connector to LPT2 (I/O 0x278). */
+#define PARALLEL_PORT_RISCPC PARALLEL_PORT_LPT2
+
 /* ========================================================================
  * Parallel Bus API
  * ======================================================================== */

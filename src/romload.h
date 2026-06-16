@@ -21,6 +21,41 @@
 #ifndef ROMLOAD_H
 #define ROMLOAD_H
 
+#include "rpcemu.h"
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef enum {
+	RomAddressing_26Bit,
+	RomAddressing_32Bit,
+	RomAddressing_Unknown
+} RomAddressing;
+
 void loadroms(void);
+
+/** Non-zero if this machine model can run 32-bit ROM images (RISC OS 5+). */
+int model_supports_32bit_rom(Model model);
+
+/**
+ * Inspect ROM files and guess whether they require 26-bit or 32-bit CPU support.
+ *
+ * @param rom_dir  ROM subdirectory/file within roms/, or empty for all of roms/
+ * @param detail   Optional buffer for a short description (e.g. "RISC OS 5.30")
+ * @param detail_len Length of detail buffer
+ */
+RomAddressing rom_probe_addressing(const char *rom_dir, char *detail, size_t detail_len);
+
+/**
+ * Check whether a ROM set is compatible with the selected machine model.
+ *
+ * @return 1 if compatible, 0 if not
+ */
+int rom_model_is_compatible(Model model, const char *rom_dir, char *msg, size_t msg_len);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* ROMLOAD_H */

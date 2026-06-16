@@ -24,6 +24,7 @@
 extern void cmos_init(void);
 extern void cmos_reset(void);
 extern void savecmos(void);
+extern void cmos_sync_ide_drive_count(void);
 extern void reseti2c(uint32_t chosen_i2c_devices);
 extern void cmosi2cchange(int nuclock, int nudata);
 

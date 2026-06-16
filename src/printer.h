@@ -123,6 +123,22 @@ size_t printer_get_buffer_size(void);
  */
 int printer_has_pending_data(void);
 
+/**
+ * Poll the printer for idle timeouts and flush pending jobs.
+ * Call periodically from the emulator main loop.
+ */
+void printer_poll(void);
+
+/**
+ * Enable or disable automatic PDF conversion after each print job.
+ */
+void printer_set_auto_pdf(int enable);
+
+/**
+ * Return non-zero if automatic PDF conversion is enabled.
+ */
+int printer_get_auto_pdf(void);
+
 /* ========================================================================
  * Legacy API (for backward compatibility with old superio.c)
  * ======================================================================== */

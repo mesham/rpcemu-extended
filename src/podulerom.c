@@ -160,7 +160,7 @@ initpodulerom(void)
 	const struct dirent *d;
 
 	/* Build podulerom directory path */
-	snprintf(romdirectory, sizeof(romdirectory), "%spoduleroms/", rpcemu_get_datadir());
+	snprintf(romdirectory, sizeof(romdirectory), "%spoduleroms/", rpcemu_get_resourcedir());
 
 	if (podulerom != NULL) {
 		free(podulerom);

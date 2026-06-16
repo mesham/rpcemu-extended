@@ -694,7 +694,7 @@ mouse_process(void)
 
 	/* Update quadrature mouse */
 	iomd.mousex += x;
-	iomd.mousey -= y; /* Allegro and RPC Y axis go in opposite directions */
+	iomd.mousey -= y; /* host and RPC Y axes are opposite */
 
         /* Return if not PS/2 mouse */
         if (machine.model != Model_A7000 && machine.model != Model_A7000plus && machine.model != Model_Phoebe) {

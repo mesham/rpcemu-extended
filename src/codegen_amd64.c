@@ -83,7 +83,7 @@ addrip(const void *addr)
 {
 	const ptrdiff_t rel = ((const char *) addr) -
 	                      ((const char *) &rcodeblock[blockpoint2][codeblockpos]);
-	addlong((uint32_t) (rel - 4));
+	addlong((uint32_t) (int32_t) (rel - 4));
 }
 
 static inline void
@@ -91,7 +91,7 @@ addrip_byte(const void *addr, uint8_t x)
 {
 	const ptrdiff_t rel = ((const char *) addr) -
 	                      ((const char *) &rcodeblock[blockpoint2][codeblockpos]);
-	addlong((uint32_t) (rel - 5));
+	addlong((uint32_t) (int32_t) (rel - 5));
 	addbyte(x);
 }
 
@@ -100,7 +100,7 @@ addrip_long(const void *addr, uint32_t x)
 {
 	const ptrdiff_t rel = ((const char *) addr) -
 	                      ((const char *) &rcodeblock[blockpoint2][codeblockpos]);
-	addlong((uint32_t) (rel - 8));
+	addlong((uint32_t) (int32_t) (rel - 8));
 	addlong(x);
 }
 

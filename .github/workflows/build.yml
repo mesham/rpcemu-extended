@@ -1,0 +1,73 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-amd64:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            pkg-config \
+            libwxgtk3.2-dev \
+            libsdl2-dev \
+            libgs-dev \
+            ghostscript
+
+      - name: Build and package (amd64)
+        run: |
+          chmod +x build.sh setup-build-env.sh
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            ./build.sh --deb --zip
+          else
+            ./build.sh --zip
+          fi
+
+      - name: Smoke test binary
+        run: |
+          file releases/linux/amd64/rpcemu-recompiler | grep -i ELF
+          ls -la releases/linux/amd64/
+
+      - name: Upload Linux amd64 release
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcemu-linux-amd64
+          path: |
+            releases/linux/amd64/
+            releases/linux/*.tar.gz
+            releases/linux/amd64/*.deb
+          if-no-files-found: error
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [linux-amd64]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux amd64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rpcemu-linux-amd64
+          path: upload
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: upload/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

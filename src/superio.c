@@ -201,6 +201,10 @@ typedef struct {
     
     /* State */
     int fifo_enabled;
+    int thre_int_pending; /* THRE interrupt latched; armed on ETBEI enable-edge (THR
+                           * empty) and on THR write, cleared by reading IIR or
+                           * disabling ETBEI. RISC OS's KickTX re-arms via the enable
+                           * edge, and its irq710 handler clears it by reading IIR. */
     uint16_t base_addr; /* Base I/O address (0x3F8 or 0x2F8) */
 } UART;
 
@@ -224,6 +228,9 @@ static ParallelPort lpt2;
 static UART com1;
 static UART com2;
 
+static int serial_tx_logged[SERIAL_PORT_COUNT];
+static int superio_uart_trace_remaining;
+
 /* FDC37C672 GP Index Registers */
 static int gp_index;
 static uint8_t gp_regs[16];
@@ -236,8 +243,38 @@ static void parallel_reset(ParallelPort *pp, uint16_t base);
 static void parallel_write(ParallelPort *pp, uint32_t offset, uint8_t val, ParallelPortID bus_port);
 static uint8_t parallel_read(ParallelPort *pp, uint32_t offset, ParallelPortID bus_port);
 static void uart_reset(UART *uart, uint16_t base);
+static void uart_rx_push(UART *uart, uint8_t data);
+static void uart_update_irq(UART *uart, SerialPortID bus_port);
 static void uart_write(UART *uart, uint32_t offset, uint8_t val, SerialPortID bus_port);
 static uint8_t uart_read(UART *uart, uint32_t offset, SerialPortID bus_port);
+
+static void
+superio_uart_trace(const char *op, uint32_t addr, uint32_t port, uint8_t byte)
+{
+    static const char *const reg_dlab0[8] = {
+        "RBR/THR", "IER", "IIR/FCR", "LCR", "MCR", "LSR", "MSR", "SCR"
+    };
+    static const char *const reg_dlab1[8] = {
+        "DLL", "DLM", "IIR/FCR", "LCR", "MCR", "LSR", "MSR", "SCR"
+    };
+    int dlab;
+    const char *name;
+
+    if (port < 0x3f8 || port > 0x3ff) {
+        return;
+    }
+    if (superio_uart_trace_remaining <= 0) {
+        return;
+    }
+    superio_uart_trace_remaining--;
+
+    dlab = (com1.lcr & LCR_DLAB) ? 1 : 0;
+    name = (dlab ? reg_dlab1 : reg_dlab0)[port - 0x3f8];
+
+    rpclog("SuperIO UART: %-5s addr=%08x port=0x%03x %-7s val=0x%02x (DLAB=%d IER=0x%02x LSR=0x%02x MCR=0x%02x pend=%d)\n",
+           op, addr, port, name, byte, dlab, com1.ier, com1.lsr, com1.mcr,
+           com1.thre_int_pending);
+}
 
 /* ========================================================================
  * SMI (System Management Interrupt) Handling
@@ -395,11 +432,11 @@ parallel_write(ParallelPort *pp, uint32_t offset, uint8_t val, ParallelPortID bu
                val, val & 1, (val >> 1) & 1, (val >> 2) & 1, 
                (val >> 3) & 1, (val >> 4) & 1, (val >> 5) & 1);
         
-        /* Detect strobe edge: data is sent on falling edge of strobe */
-        if ((pp->control & PP_CTRL_STROBE) && !(val & PP_CTRL_STROBE)) {
-            /* Strobe falling edge - send the latched data */
-            parallel_do_handshake(pp, bus_port);
-        }
+    /* Detect strobe edge: data is sent on falling edge of strobe */
+    if ((pp->control & PP_CTRL_STROBE) && !(val & PP_CTRL_STROBE)) {
+        /* Strobe falling edge - send the latched data */
+        parallel_do_handshake(pp, bus_port);
+    }
         
         /* Update parallel bus control signals */
         parallel_bus_set_ctrl(bus_port, val);
@@ -553,7 +590,7 @@ uart_reset(UART *uart, uint16_t base)
     
     /* No interrupt pending */
     uart->iir = IIR_NO_INT;
-    
+
     /* Modem status: all signals inactive (inverted logic on some bits) */
     uart->msr = 0;
     
@@ -567,42 +604,114 @@ uart_update_iir(UART *uart)
 {
     /* Check interrupt sources in priority order */
     if ((uart->ier & 0x04) && (uart->lsr & (LSR_OE | LSR_PE | LSR_FE | LSR_BI))) {
-        /* Receiver Line Status */
         uart->iir = IIR_RLS;
     } else if ((uart->ier & 0x01) && (uart->lsr & LSR_DR)) {
-        /* Received Data Available */
         uart->iir = IIR_RDA;
-    } else if ((uart->ier & 0x02) && (uart->lsr & LSR_THRE)) {
-        /* Transmitter Holding Register Empty */
-        uart->iir = IIR_THRE;
     } else if ((uart->ier & 0x08) && (uart->msr & 0x0F)) {
-        /* Modem Status */
         uart->iir = IIR_MODEM;
+    } else if ((uart->ier & 0x02) && uart->thre_int_pending && (uart->lsr & LSR_THRE)) {
+        uart->iir = IIR_THRE;
     } else {
         uart->iir = IIR_NO_INT;
     }
-    
-    /* Add FIFO enabled bits if FIFO is on */
+
     if (uart->fifo_enabled) {
         uart->iir |= IIR_FIFO_EN;
     }
+}
+
+/*
+ * RISC OS drives the IOMD Risc PC 16550 via a normal IRQ (IOMD IRQB bit 2,
+ * IOMD_IRQB_SERIAL), NOT via the FIQ register. The UART INT pin only reaches
+ * the IOMD when MCR OUT2 (bit 3) is set, so that bit gates the interrupt.
+ * (Confirmed against RiscOS/Sources/HWSupport/Serial s/Serial710 and
+ * HAL_IOMD s/Interrupts: serial device number 10 -> IRQB bit 2.)
+ */
+static void
+com1_irq_update(int pending)
+{
+    static int last_pending = -1;
+
+    if (pending != last_pending && superio_uart_trace_remaining > 0) {
+        superio_uart_trace_remaining--;
+        rpclog("SuperIO: COM1 serial IRQ %s (irqb.mask=0x%02x serial_unmasked=%d -> delivered=%d)\n",
+               pending ? "ASSERT" : "deassert",
+               iomd.irqb.mask, (iomd.irqb.mask & IOMD_IRQB_SERIAL) ? 1 : 0,
+               (pending && (iomd.irqb.mask & IOMD_IRQB_SERIAL)) ? 1 : 0);
+    }
+    last_pending = pending;
+
+    if (pending) {
+        iomd.irqb.status |= IOMD_IRQB_SERIAL;
+    } else {
+        iomd.irqb.status &= ~IOMD_IRQB_SERIAL;
+    }
+    updateirqs();
+}
+
+static void
+uart_update_irq(UART *uart, SerialPortID bus_port)
+{
+    int pending = 0;
+
+    if ((uart->ier & 0x04) && (uart->lsr & (LSR_OE | LSR_PE | LSR_FE | LSR_BI))) {
+        pending = 1;
+    } else if ((uart->ier & 0x01) && (uart->lsr & LSR_DR)) {
+        pending = 1;
+    } else if ((uart->ier & 0x02) && uart->thre_int_pending && (uart->lsr & LSR_THRE)) {
+        pending = 1;
+    } else if ((uart->ier & 0x08) && (uart->msr & 0x0F)) {
+        pending = 1;
+    }
+
+    /* The UART INT pin is gated onto the bus by MCR OUT2 (bit 3). */
+    if (!(uart->mcr & 0x08)) {
+        pending = 0;
+    }
+
+    if (bus_port != SERIAL_PORT_COM1) {
+        return;
+    }
+
+    com1_irq_update(pending);
+}
+
+static void
+uart_rx_push(UART *uart, uint8_t data)
+{
+    if (uart->rx_count >= (int) sizeof(uart->rx_fifo)) {
+        uart->lsr |= LSR_OE;
+        return;
+    }
+
+    uart->rx_fifo[uart->rx_head] = data;
+    uart->rx_head = (uart->rx_head + 1) & 15;
+    uart->rx_count++;
+    uart->rbr = data;
+    uart->lsr |= LSR_DR;
 }
 
 static void
 uart_write(UART *uart, uint32_t offset, uint8_t val, SerialPortID bus_port)
 {
     switch (offset) {
-    case UART_THR:  /* THR or DLL */
+        case UART_THR:  /* THR or DLL */
         if (uart->lcr & LCR_DLAB) {
             uart->dll = val;
         } else {
             /* Transmit data to attached device via serial bus */
             serial_bus_write_data(bus_port, val);
+            rpclog("SuperIO: COM%d TX 0x%02X at THR\n", (int) bus_port + 1, val);
             uart->lsr &= ~LSR_THRE;
             uart->lsr &= ~LSR_TEMT;
             /* Immediately "transmit" */
             uart->lsr |= LSR_THRE | LSR_TEMT;
-            uart_update_iir(uart);
+            /* THR is empty again: re-arm the THRE interrupt so the driver's ISR is
+             * called back to fetch the next byte (or to disable ETBEI when done). */
+            if (uart->ier & 0x02) {
+                uart->thre_int_pending = 1;
+            }
+            uart_update_irq(uart, bus_port);
         }
         break;
         
@@ -610,8 +719,19 @@ uart_write(UART *uart, uint32_t offset, uint8_t val, SerialPortID bus_port)
         if (uart->lcr & LCR_DLAB) {
             uart->dlm = val;
         } else {
+            uint8_t old_ier = uart->ier;
             uart->ier = val & 0x0F;
-            uart_update_iir(uart);
+            if (!(uart->ier & 0x02)) {
+                /* ETBEI disabled: drop the latched THRE interrupt. */
+                uart->thre_int_pending = 0;
+            } else if (!(old_ier & 0x02) && (uart->lsr & LSR_THRE)) {
+                /* Rising edge of ETBEI while THR is empty: a real 16550 asserts the
+                 * THRE interrupt immediately. RISC OS depends on this to bootstrap
+                 * transmission, and its KickTX routine re-triggers a stalled TX by
+                 * toggling ETBEI 0->1 every 0.5s expecting this exact behaviour. */
+                uart->thre_int_pending = 1;
+            }
+            uart_update_irq(uart, bus_port);
         }
         break;
         
@@ -621,12 +741,13 @@ uart_write(UART *uart, uint32_t offset, uint8_t val, SerialPortID bus_port)
         if (val & 0x02) {
             /* Clear receive FIFO */
             uart->rx_head = uart->rx_tail = uart->rx_count = 0;
+            uart->lsr &= ~LSR_DR;
         }
         if (val & 0x04) {
             /* Clear transmit FIFO */
             uart->tx_head = uart->tx_tail = uart->tx_count = 0;
         }
-        uart_update_iir(uart);
+        uart_update_irq(uart, bus_port);
         break;
         
     case UART_LCR:
@@ -645,6 +766,8 @@ uart_write(UART *uart, uint32_t offset, uint8_t val, SerialPortID bus_port)
                         ((val & 0x04) << 4) |  /* OUT1 -> RI */
                         ((val & 0x08) << 4);   /* OUT2 -> DCD */
         }
+        /* OUT2 (bit 3) gates the UART INT pin onto the bus, so re-evaluate. */
+        uart_update_irq(uart, bus_port);
         break;
         
     case UART_SCR:
@@ -667,9 +790,20 @@ uart_read(UART *uart, uint32_t offset, SerialPortID bus_port)
             val = uart->dll;
         } else {
             /* Read receive buffer */
-            val = uart->rbr;
-            uart->lsr &= ~LSR_DR;
-            uart_update_iir(uart);
+            if (uart->rx_count > 0) {
+                val = uart->rx_fifo[uart->rx_tail];
+                uart->rx_tail = (uart->rx_tail + 1) & 15;
+                uart->rx_count--;
+                if (uart->rx_count > 0) {
+                    uart->rbr = uart->rx_fifo[uart->rx_tail];
+                } else {
+                    uart->lsr &= ~LSR_DR;
+                }
+            } else {
+                val = uart->rbr;
+                uart->lsr &= ~LSR_DR;
+            }
+            uart_update_irq(uart, bus_port);
         }
         break;
         
@@ -682,13 +816,14 @@ uart_read(UART *uart, uint32_t offset, SerialPortID bus_port)
         break;
         
     case UART_IIR:  /* IIR (read-only) */
+        uart_update_iir(uart);
         val = uart->iir;
-        /* Reading IIR clears THRE interrupt */
-        if ((uart->iir & 0x0E) == IIR_THRE) {
-            uart->iir = IIR_NO_INT;
-            if (uart->fifo_enabled) {
-                uart->iir |= IIR_FIFO_EN;
-            }
+        if ((val & 0x0E) == IIR_THRE) {
+            /* Acknowledged by reading IIR: clears the THRE interrupt (16550). */
+            uart->thre_int_pending = 0;
+        }
+        if (bus_port == SERIAL_PORT_COM1) {
+            uart_update_irq(uart, bus_port);
         }
         break;
         
@@ -704,7 +839,7 @@ uart_read(UART *uart, uint32_t offset, SerialPortID bus_port)
         val = uart->lsr;
         /* Reading LSR clears error bits */
         uart->lsr &= ~(LSR_OE | LSR_PE | LSR_FE | LSR_BI);
-        uart_update_iir(uart);
+        uart_update_irq(uart, bus_port);
         break;
         
     case UART_MSR:
@@ -717,7 +852,7 @@ uart_read(UART *uart, uint32_t offset, SerialPortID bus_port)
         }
         /* Reading MSR clears delta bits */
         uart->msr &= 0xF0;
-        uart_update_iir(uart);
+        uart_update_irq(uart, bus_port);
         break;
         
     case UART_SCR:
@@ -752,20 +887,31 @@ superio_serial_rx(SerialPortID port, uint8_t data)
         return;
     }
     
-    /* Put data in receive buffer register */
-    uart->rbr = data;
-    
-    /* Set Data Ready bit in LSR */
-    uart->lsr |= LSR_DR;
-    
-    /* Update interrupt identification */
-    uart_update_iir(uart);
-    
-    /* Trigger FIQ for COM1 if RX interrupt is enabled */
-    if (port == SERIAL_PORT_COM1 && (uart->ier & 0x01)) {
-        iomd.fiq.status |= IOMD_FIQ_SERIAL;
-        updateirqs();
+    /* Queue received data (responses may arrive during a THR write) */
+    uart_rx_push(uart, data);
+    uart_update_irq(uart, port);
+}
+
+/**
+ * Return the number of free bytes in a UART's receive FIFO.
+ */
+int
+superio_serial_rx_space(SerialPortID port)
+{
+    const UART *uart;
+
+    switch (port) {
+    case SERIAL_PORT_COM1:
+        uart = &com1;
+        break;
+    case SERIAL_PORT_COM2:
+        uart = &com2;
+        break;
+    default:
+        return 0;
     }
+
+    return (int) sizeof(uart->rx_fifo) - uart->rx_count;
 }
 
 /**
@@ -796,9 +942,7 @@ superio_serial_update_msr(SerialPortID port, uint8_t status)
     
     /* Update MSR: delta bits in low nibble, status in high nibble */
     uart->msr = (status & 0xF0) | (uart->msr & 0x0F) | delta;
-    
-    /* Update interrupt identification */
-    uart_update_iir(uart);
+    uart_update_irq(uart, port);
 }
 
 /* ========================================================================
@@ -899,6 +1043,9 @@ superio_get_snapshot(SuperIOStateSnapshot *snapshot)
  * Reset
  * ======================================================================== */
 
+#define SUPERIO_IDE_MMIO_BASE  0x3010000u
+#define SUPERIO_IDE_MMIO_LIMIT 0x3012000u
+
 void
 superio_reset(SuperIOType chosen_super_type)
 {
@@ -914,6 +1061,8 @@ superio_reset(SuperIOType chosen_super_type)
     parallel_reset(&lpt2, 0x278);
 
     /* Reset serial ports */
+    memset(serial_tx_logged, 0, sizeof(serial_tx_logged));
+    superio_uart_trace_remaining = 3000;
     uart_reset(&com1, 0x3F8);
     uart_reset(&com2, 0x2F8);
 
@@ -949,16 +1098,45 @@ superio_reset(SuperIOType chosen_super_type)
     fdc_reset();
 }
 
+/**
+ * Map a memory-mapped SuperIO address to an IDE register number (0x1F0-0x1F7, 0x3F6).
+ * IOMD maps each register to a word; byte lanes within the word alias the same register.
+ */
+static int
+superio_ide_reg_from_addr(uint32_t addr)
+{
+    if (addr < SUPERIO_IDE_MMIO_BASE || addr >= SUPERIO_IDE_MMIO_LIMIT) {
+        return -1;
+    }
+
+    const uint32_t offset = (addr - SUPERIO_IDE_MMIO_BASE) & ~3u;
+    const uint32_t reg = offset >> 2;
+
+    if (reg >= 0x1f0 && reg <= 0x1f7) {
+        return (int) reg;
+    }
+    if (reg == 0x3f6) {
+        return 0x3f6;
+    }
+    return -1;
+}
+
+static uint8_t
+superio_extract_io_byte(uint32_t addr, uint32_t val)
+{
+    /* ARM stores place the byte in the lane selected by address bits 0-1 */
+    return (uint8_t) (val >> ((addr & 3u) * 8));
+}
+
 /* ========================================================================
  * Main I/O Write Handler
  * ======================================================================== */
 
 void
-superio_write(uint32_t addr, uint32_t val)
+superio_write_byte(uint32_t addr, uint8_t byte)
 {
     /* Convert memory-mapped address to IO port */
     uint32_t port = (addr >> 2) & 0x7FF;
-    uint8_t byte = (uint8_t) val;
 
     /* -------------------- Configuration Mode Entry -------------------- */
     if (configmode != SUPERIO_MODE_CONFIGURATION) {
@@ -1012,10 +1190,18 @@ superio_write(uint32_t addr, uint32_t val)
     }
 
     /* -------------------- IDE (665GT only) -------------------- */
-    if ((port >= 0x1f0 && port <= 0x1f7) || port == 0x3f6) {
-        if (super_type == SuperIOType_FDC37C665GT) {
-            writeide(port, byte);
+    {
+        const int ide_reg = superio_ide_reg_from_addr(addr);
+        if (ide_reg >= 0) {
+            if (super_type == SuperIOType_FDC37C665GT) {
+                writeide((uint16_t) ide_reg, byte);
+            }
+            return;
         }
+    }
+    if (((port >= 0x1f0 && port <= 0x1f7) || port == 0x3f6) &&
+        super_type == SuperIOType_FDC37C665GT) {
+        writeide(port, byte);
         return;
     }
 
@@ -1051,12 +1237,8 @@ superio_write(uint32_t addr, uint32_t val)
 
     /* -------------------- Serial Port COM1 (0x3F8-0x3FF) -------------------- */
     if (port >= 0x3f8 && port <= 0x3ff) {
+        superio_uart_trace("write", addr, port, byte);
         uart_write(&com1, port - 0x3f8, byte, SERIAL_PORT_COM1);
-        /* Trigger FIQ on transmit ready (for RISC OS compatibility) */
-        if (port == 0x3f9 && (byte & 2)) {
-            iomd.fiq.status |= IOMD_FIQ_SERIAL;
-            updateirqs();
-        }
         return;
     }
 
@@ -1068,6 +1250,12 @@ superio_write(uint32_t addr, uint32_t val)
 
     /* -------------------- Unhandled -------------------- */
     rpclog("SuperIO: Unhandled write port=0x%03X val=0x%02X\n", port, byte);
+}
+
+void
+superio_write(uint32_t addr, uint32_t val)
+{
+    superio_write_byte(addr, superio_extract_io_byte(addr, val));
 }
 
 /* ========================================================================
@@ -1111,11 +1299,21 @@ superio_read(uint32_t addr)
     }
 
     /* -------------------- IDE (665GT only) -------------------- */
-    if ((port >= 0x1f0 && port <= 0x1f7) || port == 0x3f6) {
-        if (super_type == SuperIOType_FDC37C665GT) {
-            return readide(port);
+    {
+        const int ide_reg = superio_ide_reg_from_addr(addr);
+        if (ide_reg >= 0) {
+            if (super_type == SuperIOType_FDC37C665GT) {
+                const uint8_t val = readide((uint16_t) ide_reg);
+                /* Byte lanes alias the same register on RiscPC IDE mapping. */
+                return val;
+            }
+            return 0xFF;
         }
-        return 0xFF;
+    }
+    if (((port >= 0x1f0 && port <= 0x1f7) || port == 0x3f6) &&
+        super_type == SuperIOType_FDC37C665GT) {
+        const uint8_t val = readide(port);
+        return val;
     }
 
     /* -------------------- Parallel Port LPT2 (0x278-0x27F) -------------------- */
@@ -1145,12 +1343,9 @@ superio_read(uint32_t addr)
 
     /* -------------------- Serial Port COM1 (0x3F8-0x3FF) -------------------- */
     if (port >= 0x3f8 && port <= 0x3ff) {
-        if (port == 0x3fa) {
-            /* Reading IIR clears serial FIQ */
-            iomd.fiq.status &= ~IOMD_FIQ_SERIAL;
-            updateirqs();
-        }
-        return uart_read(&com1, port - 0x3f8, SERIAL_PORT_COM1);
+        const uint8_t val = uart_read(&com1, port - 0x3f8, SERIAL_PORT_COM1);
+        superio_uart_trace("read", addr, port, val);
+        return val;
     }
 
     /* -------------------- Serial Port COM2 (0x2F8-0x2FF) -------------------- */

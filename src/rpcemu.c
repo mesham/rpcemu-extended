@@ -28,12 +28,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#if defined WIN32 || defined _WIN32
-#undef UNICODE
-#include <windows.h>
-#endif
-
-
 #include "rpcemu.h"
 #include "mem.h"
 #include "vidc20.h"
@@ -58,6 +52,9 @@
 #include "disc_hfe.h"
 #include "disc_mfm_common.h"
 #include "parallel.h"
+#include "serial.h"
+#include "printer.h"
+#include "peripheral_config.h"
 
 #ifdef RPCEMU_NETWORKING
 #include "network.h"
@@ -92,7 +89,7 @@ Config config = {
 	0,			/* refresh */
 	1,			/* soundenabled */
 	1,			/* cdromenabled */
-	0,			/* cdromtype  -- Only used on Windows build */
+	0,			/* cdromtype (0=disabled, 1=ISO, 2=ioctl) */
 	"",			/* isoname */
 	1,			/* mousehackon */
 	0,			/* mousetwobutton */
@@ -536,9 +533,8 @@ rpclog(const char *format, ...)
  * Reinitialise all emulated subsystems based on current configuration. This
  * is equivalent to resetting the emulated hardware.
  *
- * Called from within the GUI code (Allegro or Windows) when the user has made
- * a change to their preferred configuration, or when the user picks 'Reset'
- * from the menu.
+ * Called from the host GUI when the user has changed configuration, or when
+ * the user picks 'Reset' from the menu.
  */
 void
 resetrpc(void)
@@ -571,6 +567,8 @@ resetrpc(void)
 #endif
 
 	cycles = 0;
+
+	peripheral_config_apply();
 
 	rpclog("RPCEmu: Machine reset complete\n");
 }
@@ -661,6 +659,8 @@ rpcemu_start(void)
 {
 	hostfs_init();
 	parallel_bus_init();
+	serial_bus_init();
+	printer_init();
 	mem_init();
 	cp15_init();
 	arm_init();
@@ -751,6 +751,9 @@ execrpcemu(void)
 			drawscre = 0;
 		}
 	}
+
+	printer_poll();
+	serial_modem_poll();
 }
 
 /**
@@ -798,6 +801,7 @@ rpcemu_idle(void)
 			iomd.irqa.status |= IOMD_IRQA_FLOPPY_INDEX;
 			updateirqs();
 		}
+		serial_modem_poll();
 		/* Sleep if no interrupts pending */
 		if (!arm.event) {
 #ifdef RPCEMU_WIN
@@ -819,6 +823,8 @@ rpcemu_idle(void)
 					drawscre = 0;
 				}
 			}
+			printer_poll();
+			serial_modem_poll();
 			rpcemu_idle_process_events();
 		}
 	}
@@ -842,6 +848,7 @@ endrpcemu(void)
         free(ram01);
         free(rom);
         savecmos();
+	peripheral_config_shutdown();
         config_save(&config);
 
 #ifdef RPCEMU_NETWORKING

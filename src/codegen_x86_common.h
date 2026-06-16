@@ -71,7 +71,7 @@ addrel32(const void *addr)
 	ptrdiff_t rel = ((const char *) addr) -
 	                ((const char *) &rcodeblock[blockpoint2][codeblockpos]);
 
-	addlong((uint32_t) (rel - 4));
+	addlong((uint32_t) (int32_t) (rel - 4));
 }
 
 #define gen_x86_call(addr)	addbyte(0xe8); addrel32(addr)

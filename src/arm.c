@@ -35,6 +35,7 @@
 
 ARMState arm;
 
+int linecyc = 0; /* FPA cycle accounting; dynarec build defines this in arm_dynarec.c */
 int blockend;
 uint32_t inscount;
 int cpsr;

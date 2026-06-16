@@ -140,8 +140,14 @@ serial_bus_write_data(SerialPortID port, uint8_t data)
     }
 
     if (ports[port].has_device && ports[port].device.on_write) {
-        // rpclog("Serial Bus: COM%d TX byte 0x%02X\n", port + 1, data);
         ports[port].device.on_write(data, ports[port].device.userdata);
+    } else {
+        static int warned[SERIAL_PORT_COUNT];
+        if (!warned[port]) {
+            warned[port] = 1;
+            rpclog("Serial Bus: COM%d TX 0x%02X dropped (no backend attached)\n",
+                   (int) port + 1, data);
+        }
     }
 }
 

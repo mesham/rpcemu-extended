@@ -33,12 +33,15 @@
 
 #include "rpcemu.h"
 #include "cmos.h"
+#include "ide.h"
 
 #if 0
 #define dbgprintf(x...) { fprintf(stderr, x); }
 #else
 #define dbgprintf(x...)
 #endif
+
+static void cmos_update_checksum(void);
 
 int i2cclock = 1; /**< The current value of the I2C clock pin */
 int i2cdata  = 1; /**< The current value of the I2C data pin */
@@ -94,6 +97,36 @@ typedef struct {
 	int state;
 } PCF8583;
 
+static int
+cmos_logical_offset(int location)
+{
+	int offset = location + 0x40;
+
+	if (offset > 255) {
+		offset -= 240;
+	}
+	return offset;
+}
+
+/**
+ * Reflect attached IDE images in CMOS (location 135, bits 6-7).
+ * ADFS uses this count during boot on RISC OS 3/4; RO5 may still consult it for tools like !HForm.
+ */
+void
+cmos_sync_ide_drive_count(void)
+{
+	const int ide_drives = ide_attached_hdd_count();
+	const int offset = cmos_logical_offset(135);
+	const uint8_t old = cmosram[offset];
+	const uint8_t new_val = (uint8_t) ((old & 0x3fu) | ((ide_drives & 3) << 6));
+
+	if (new_val != old) {
+		cmosram[offset] = new_val;
+		rpclog("CMOS: IDE disc count set to %d (location 135)\n", ide_drives);
+		cmos_update_checksum();
+	}
+}
+
 /**
  * Update CMOS contents to automatically handle various Host and emulation
  * settings.
@@ -132,6 +165,8 @@ cmos_update_settings(void)
 	} else {
 		cmosram[0x5d] = 0; /* Quadrature mouse */
 	}
+
+	cmos_sync_ide_drive_count();
 
 	// What about also initialising some parts to sensible defaults?
 	// eg default bootfs, number of IDE discs, floppy etc....

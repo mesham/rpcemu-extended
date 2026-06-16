@@ -35,8 +35,14 @@
 extern "C" {
 #endif /* __cplusplus */
 
-/* Version number of RPCEmu */
-#define VERSION "0.9.5-Spork"
+/*
+ * Application version — canonical value is the VERSION file at the project root.
+ * CMake passes it as -DRPCEMU_VERSION="..."; VERSION is the macro used in C code.
+ */
+#ifndef RPCEMU_VERSION
+#define RPCEMU_VERSION "unknown"
+#endif
+#define VERSION RPCEMU_VERSION
 
 /* URLs used for the help menu weblinks */
 #define URL_MANUAL  "http://www.marutan.net/rpcemu/manual/"
@@ -51,28 +57,7 @@ extern "C" {
 # define __attribute__(x) /*NOTHING*/
 #endif
 
-#if defined WIN32 || defined _WIN32
-        #define RPCEMU_WIN
-	#ifdef _MSC_VER // Microsoft Visual Studio
-                #define fseeko64(_a, _b, _c) fseek(_a, (long)_b, _c)
-                __declspec(dllimport) void __stdcall Sleep(unsigned long dwMilliseconds);
-	#endif
-	#define sleep(x) Sleep(x)
-#endif
-
-
-#if defined __MACH__ || defined __OpenBSD__ || defined __FreeBSD__
-#define fseeko64(_a, _b, _c) fseeko(_a, _b, _c)
-#define ftello64(stream) ftello(stream)
-#define fopen64(_a, _b) fopen(_a, _b)
-#define off64_t off_t
-#endif
-
-/* Does this platform support one or more of our networking types? */
-/* Note that networking is currently supported on Mac OS X with the Cocoa GUI
-   version but not with the Allegro GUI. */
-#if defined __linux || defined __linux__ || defined WIN32 || defined _WIN32 || \
-    defined RPCEMU_COCOA_GUI
+#if defined __linux || defined __linux__
 #define RPCEMU_NETWORKING
 #endif
 
@@ -230,7 +215,7 @@ extern void rpcemu_nat_forward_remove(PortForwardRule rule);
 
 extern uint32_t inscount;
 
-/* Activity counters for status bar indicators (implemented in Qt frontend) */
+/* Activity counters for status bar indicators (implemented in wx host) */
 extern void hostfs_activity_increment(void);
 extern void network_activity_increment(void);
 extern void ide_activity_increment(void);
@@ -239,11 +224,14 @@ extern void fdc_activity_increment(void);
 /* These functions can optionally be overridden by a platform. If not
    needed to be overridden, there is a generic version in rpc-machdep.c */
 extern const char *rpcemu_get_datadir(void);
+extern const char *rpcemu_get_resourcedir(void);
+extern void rpcemu_set_datadir(const char *path);
+extern void rpcemu_set_resourcedir(const char *path);
 extern const char *rpcemu_get_machine_datadir(void);
 extern void rpcemu_set_machine_datadir(const char *machine_name);
 extern const char *rpcemu_get_log_path(void);
 
-/* rpc-[linux|win].c */
+/* rpc.c */
 typedef struct {
 	uint64_t	size;		/**< Size of disk */
 	uint64_t	free;		/**< Free space on disk */
@@ -301,7 +289,7 @@ extern int debugger_instruction_hook(uint32_t pc, uint32_t opcode);
 extern void debugger_memory_access(uint32_t address, uint32_t size, int is_write, uint32_t value);
 extern void debugger_after_instruction(uint32_t pc, uint32_t opcode);
 
-/* rpc-qt5.cpp */
+/* host GUI bridge */
 extern void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl, int yh, int double_size, int host_xsize, int host_ysize);
 extern void rpcemu_move_host_mouse(uint16_t x, uint16_t y);
 extern void rpcemu_idle_process_events(void);
@@ -363,6 +351,12 @@ extern void resetfpa(void);
 extern void fpaopcode(uint32_t opcode);
 
 /* settings.cpp */
+extern void config_deep_copy(Config *dest, const Config *src);
+extern void config_sync_machine_edit_to_copy(Config *dest, const Config *src);
+extern void config_apply_machine_edit(Config *cfg, const char *name, const char *rom_dir,
+                                      unsigned mem_size, unsigned vram_size, int refresh,
+                                      NetworkType network_type, const char *bridgename,
+                                      const char *ipaddress);
 extern void config_load(Config *config);
 extern void config_load_from_path(Config *config, const char *path);
 extern void config_save(Config *config);

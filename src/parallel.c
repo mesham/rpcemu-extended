@@ -278,26 +278,18 @@ parallel_bus_device_ack(ParallelPortID port)
     }
     
     p = &ports[port];
-    
-    /* Generate ACK interrupt if enabled */
-    /* Generate ACK interrupt if enabled */
+
+    /* Hold nACK low (active) for several status reads so polling drivers
+       see the handshake even if they miss the IRQ pulse. */
+    p->ack_pending = 10;
+
     if (p->irq_enabled) {
-        /* Pulse nACK low (we set it low in status temporarily) */
-        p->status &= ~PARALLEL_STAT_ACK;
-        
-        /* Raise interrupt */
         iomd.irqa.status |= IOMD_IRQA_PARALLEL;
         updateirqs();
-        
-        /* ACK returns high immediately (in real hardware this is ~5µs) */
-        p->status |= PARALLEL_STAT_ACK;
-        
-        rpclog("Parallel Bus: LPT%d ACK interrupt generated (IRQA status=0x%02X mask=0x%02X)\n", 
+
+        rpclog("Parallel Bus: LPT%d ACK interrupt generated (IRQA status=0x%02X mask=0x%02X)\n",
                port + 1, iomd.irqa.status, iomd.irqa.mask);
     } else {
-        /* IRQs disabled, so checking driver must be polling. 
-           Latch the ACK (Active Low) for a few reads. */
-        p->ack_pending = 5;
         rpclog("Parallel Bus: LPT%d ACK latched for polling\n", port + 1);
     }
 }

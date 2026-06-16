@@ -1,171 +1,266 @@
 # RPCEmu – Spork Edition
 
-## Overview
-This repository hosts a feature-rich fork of **RPCEmu**, the open-source emulator for Acorn Risc PC and A7000 machines. Alongside the standard emulator core, this edition layers in a modern Qt 5 front-end, a live machine inspector, integrated debugger controls, and a multi-machine configuration system. The project remains distributed under the GNU GPL v2.
+An extended fork of **[RPCEmu](http://www.marutan.net/rpcemu/)**, the open-source
+emulator for Acorn Risc PC and A7000 machines. This edition targets **Linux** with a
+wxWidgets front-end, multi-machine configuration, integrated debugger and machine
+inspector, Access/ShareFS networking, full FPA emulation, and modern CMake-based
+build tooling.
+
+Licensed under the **GNU GPL v2** — see `COPYING`.
 
 ## Screenshots
+
 ![Machine Selection](screenshots/machine-selection.png)
-![New Layout](screenshots/new-layout.png)
+![Main Window](screenshots/new-layout.png)
 ![VNC Server](screenshots/vnc.png)
-![Access](screenshots/access.png)
+![Access Networking](screenshots/access.png)
 ![Machine Inspector](screenshots/inspector.png)
-![Dissassembler](screenshots/diss.png)
+![Disassembly View](screenshots/diss.png)
 ![Memory Browser](screenshots/mem.png)
 
-## Fork highlights
-- **Multi-machine configuration** – Create, edit, clone and manage multiple machine configurations from a startup selector dialog. Each machine has isolated CMOS, HostFS and hard disc storage.
-- **Quick machine switching** – Switch between machines on-the-fly via File → Recent Machines without restarting the emulator.
-- **Shared HostFS drive** – A second "Shared" drive icon on the RISC OS icon bar provides access to a common `shared/` folder visible to all machine instances, enabling easy file sharing between configurations.
-- **Access/ShareFS networking** – Full support for Acorn Access and ShareFS file sharing via NAT networking.
-- **FPA emulation** – Full Floating Point Accelerator (FPA10) coprocessor emulation with all operations implemented and cycle-accurate timing. Enables floating-point intensive RISC OS applications to run correctly.
-- **Pixel Perfect scaling** – Optional integer scaling mode for sharp, crisp pixels without bilinear blur. Toggle via Settings → Pixel Perfect.
-- **Built-in VNC server** – Remote desktop access to RISC OS from any VNC client. Enable via Settings → VNC Server. Connect from tablets, phones, or other computers on your network.
-- **Sound mute toggle** – Quickly mute/unmute audio via Settings → Mute Sound or press F10.
-- **Machine Inspector window** – Inspect CPU registers, pipeline state, MMU flags, performance counters, and key peripheral snapshots (VIDC, SuperIO, IDE, podules) with optional auto-refresh.
-- **Integrated debugger** – Pause/resume execution, single-step (×1/×5), and manage breakpoints and watchpoints directly in the GUI, with clear status readouts for the last halt reason.
-- **Keyboard shortcuts** – Comprehensive keyboard shortcuts for common operations (see Keyboard Shortcuts section).
-- **Recent disc images** – Quick access to recently used floppy and CD-ROM images via the Disc menu.
-- **Dynarec-aware instrumentation** – The ARM dynamic recompiler honours debugger pause requests, breakpoints, and watchpoints via shared hooks (`debugger_requires_instruction_hook`) so that interpreter and dynarec stays in sync.
-- **Snapshot plumbing** – Thread-safe `MachineSnapshot` and peripheral snapshot structs marshal detailed state off the emulator thread for UI consumption without stalls.
+---
 
-## Machine configuration system
-The emulator now supports multiple isolated machine configurations:
+## Highlights
 
-| Directory | Purpose |
-| --- | --- |
-| `configs/` | Machine configuration files (`.cfg`). Each file defines model, RAM, VRAM, ROM, refresh rate, and networking settings. |
-| `machines/<name>/` | Per-machine runtime data: `cmos.ram`, `hostfs/`, `hd4.hdf`, `hd5.hdf`. Fully isolated between configurations. |
-| `shared/` | Common shared folder accessible from all machine instances via the Shared drive icon. |
-| `roms/` | Shared ROM images. Select which ROM to use per-machine in the Edit dialog. |
+- **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
+- **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
+- **Dual HostFS drives** — per-machine **HostFS** plus a common **Shared** drive (`shared/`) visible to all machines.
+- **Access/ShareFS networking** — NAT-mode relay for Acorn Access and ShareFS file sharing between emulated and real machines.
+- **Full FPA10 emulation** — floating-point coprocessor with cycle-accurate timing; works with interpreter and dynarec.
+- **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
+- **Built-in VNC server** — remote desktop access from any VNC client.
+- **Parallel port** — log raw output to a file, or a virtual printer that captures jobs to `.prn` files with optional in-process PDF conversion via Ghostscript.
+- **Serial port** — log to file, or a TCP "modem" that dials real telnet BBSes (`ATDT host:port`) with a telnet client layer and 8-bit-clean X/Y/ZMODEM transfers. See [docs/peripherals.md](docs/peripherals.md).
+- **Machine Inspector** — live CPU, disassembly, memory, peripheral, and debugger views with auto-refresh.
+- **Integrated debugger** — pause/resume, single-step, breakpoints, and watchpoints; dynarec-aware via shared hooks.
+- **Toolbar and status bar** — quick access to common actions; activity indicators for floppy, IDE, HostFS, and network.
+- **Recent disc images** — quick access to recently used floppy and CD-ROM images.
 
-### Configuration options
-Each machine configuration supports:
-- **Model** – RiscPC ARM610/710/810/StrongARM, A7000, A7000+, Phoebe
-- **RAM** – 4 MB to 256 MB
-- **VRAM** – None or 2 MB
-- **ROM** – Select from available ROM files in the `roms/` directory
-- **Refresh rate** – 20 Hz to 100 Hz (slider control)
-- **Networking** – Off, NAT, Ethernet Bridging, IP Tunnelling (Linux)
-- **Hard discs** – Create/manage HardDisc 4 and HardDisc 5 images (256 MB to 2 GB)
+---
 
+## Architecture
+
+The codebase splits into two layers:
+
+| Layer | Path | Language | Role |
+| --- | --- | --- | --- |
+| **Core** | `src/` | C11 | Guest ARM CPU (interpreter or dynarec), devices, SLiRP, debugger |
+| **GUI** | `src/gui/` | C++17 | wxWidgets front-end, threading bridge, dialogs, VNC server |
+
+The GUI runs emulation on a **worker thread** (`EmulatorHost`). UI events are posted
+as commands; video updates and debugger notifications come back through a `GuiBridge`
+interface. Inspector snapshots are marshalled off the emulator thread as plain
+`MachineSnapshot` structs.
+
+Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
+
+---
 
 ## Project layout
+
 | Path | Purpose |
 | --- | --- |
-| `src/` | Core emulator engine (ARM interpreter, dynarec, hardware devices, debugger plumbing). |
-| `src/qt5/` | Qt 5 GUI, machine inspector, debugger controls, configuration selector & networking dialogs. |
-| `slirp/` | Bundled SLiRP networking library for NAT mode. |
-| `riscos-progs/` | RISC OS module source code (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm). |
-| `poduleroms/` | Compiled podule ROM images loaded by the emulator. |
-| `hostfs/` | Default HostFS content (legacy location, now per-machine in `machines/<name>/hostfs/`). |
-| `shared/` | Common shared folder accessible from all RISC OS instances. |
-| `roms/` | Place your licensed RISC OS ROM images here (see [official instructions](http://www.marutan.net/rpcemu/manual/romimage.html)). |
-| `configs/` | Machine configuration files. |
-| `machines/` | Per-machine data directories (auto-created). |
+| `src/` | Emulator core (CPU, VIDC, IOMD, IDE, FDC, FPA, HostFS, SLiRP, …) |
+| `src/gui/` | wxWidgets front-end, machine inspector, configuration dialogs |
+| `configs/` | Machine configuration files (`.cfg`, INI format) |
+| `machines/<name>/` | Per-machine runtime data: `cmos.ram`, `hostfs/`, `hd4.hdf`, `hd5.hdf` |
+| `shared/` | Common folder exposed as `HostFS::Shared.$` (created at startup if missing) |
+| `roms/` | RISC OS ROM images — see [official ROM instructions](http://www.marutan.net/rpcemu/manual/romimage.html) |
+| `resources/` | Blank floppy/disc templates for *Disc → Floppy → Create Blank* |
+| `poduleroms/` | Compiled podule ROM images |
+| `riscos-progs/` | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm) |
+| `packaging/` | Desktop entry and other packaging files |
+| `build.sh` | Unified build and release script |
+| `docs/dynarec.md` | ARM dynamic recompiler (build, behaviour, limitations) |
+| `docs/peripherals.md` | Serial and parallel ports (file logging, TCP modem, printer) |
+| `setup-build-env.sh` | Install build dependencies (Debian/Ubuntu) |
+
+---
+
+## Getting started
+
+### Build
+
+```bash
+./setup-build-env.sh    # install dependencies (Debian/Ubuntu)
+./build.sh --zip        # build and package to releases/linux/amd64/
+./build.sh --deb --zip  # + .deb package
+```
+
+See [COMPILE.md](COMPILE.md) for manual CMake, GhostPDL, and podule ROM rebuilds.
+
+### Run
+
+```bash
+./releases/linux/amd64/rpcemu-recompiler
+```
+
+Run from the project root (or a staged release directory) so data files are found.
+
+### First launch
+
+1. The **Machine Selector** dialog lists available configurations.
+2. Use **New**, **Edit**, **Clone**, or **Delete** to manage machines.
+3. Select a machine and click **Start**.
+4. Place licensed RISC OS ROM files in `roms/<subdir>/` and select the ROM folder in
+   the machine editor.
+
+---
+
+## Machine configuration
+
+Each machine is defined by a `.cfg` file in `configs/` and a data directory under
+`machines/<name>/`.
+
+| Setting | Options |
+| --- | --- |
+| **Model** | RiscPC ARM610/710/810/StrongARM, A7000, A7000+ (experimental), Phoebe (experimental) |
+| **RAM** | 4, 8, 16, 32, 64, 128, or 256 MB |
+| **VRAM** | None or 2 MB |
+| **ROM** | Subdirectory under `roms/` containing ROM components |
+| **Refresh rate** | 20–100 Hz |
+| **Network** | Off, NAT, Ethernet Bridging, IP Tunnelling |
+| **Hard discs** | HardDisc 4 and 5 — create 256 MB, 512 MB, 1 GB, or 2 GB images |
+
+Configuration keys are stored under a `[General]` group (wxFileConfig INI format).
+NAT port-forward rules are stored in a separate `[nat_port_forward_rules]` group.
+
+---
 
 ## HostFS and Shared drives
-The emulator provides two filing system icons on the RISC OS icon bar:
 
-| Icon | RISC OS Path | Host Path | Purpose |
+Two filing system icons appear on the RISC OS icon bar:
+
+| Icon | RISC OS path | Host path | Scope |
 | --- | --- | --- | --- |
-| **HostFS** | `HostFS::HostFS.$` | `machines/<name>/hostfs/` | Per-machine storage, isolated between configurations. |
-| **Shared** | `HostFS::Shared.$` | `shared/` | Common storage visible to all machine instances. |
+| **HostFS** | `HostFS::HostFS.$` | `machines/<name>/hostfs/` | Per-machine |
+| **Shared** | `HostFS::Shared.$` | `shared/` | All machines |
 
-This allows you to:
-- Keep machine-specific files (applications, settings) isolated in each machine's HostFS
-- Share common files, utilities, or applications between all machines via the Shared drive
-- Transfer files between different machine configurations without network setup
+Use HostFS for machine-specific files and Shared for utilities or files you want
+available across configurations.
 
-## Using the machine selector
-1. On startup, the **Machine Selector** dialog appears listing all available configurations.
-2. **New** – Create a new machine configuration with default settings.
-3. **Edit** – Modify machine settings (model, RAM, ROM, networking, hard discs).
-4. **Clone** – Duplicate an existing configuration.
-5. **Delete** – Remove a configuration and optionally its associated data.
-6. **Start** – Launch the emulator with the selected configuration.
+---
 
-## Using the debugger & machine inspector
-1. Open **Debug → Machine Inspector…** to reveal the inspector window.
-2. Tabs provide:
-   - **CPU** – Registers R0–R15, CPSR/mode, performance counters, interpreter vs dynarec state.
-   - **Pipeline** – Upcoming instruction addresses and opcodes for easy tracing.
-   - **Peripherals** – VIDC palette & doublescan mode, SuperIO registers, IDE channel state, podule IRQ mapping.
-   - **Debugger** – Run/Pause, Step, Step ×5 buttons, breakpoint & watchpoint lists, last hit summaries.
-3. Auto-refresh every 500 ms keeps the view current; toggle it or hit **Refresh now** for manual polling.
-4. Breakpoints and watchpoints entered in the inspector apply even while the dynarec is active, thanks to the shared debugger hooks in `ArmDynarec.c`.
+## Machine Inspector and debugger
 
-## Differences versus upstream RPCEmu
-- Qt front-end reworked for stability with modern Qt 5 deployments.
-- Multi-machine configuration system with isolated per-machine storage.
-- Quick machine switching via Recent Machines menu.
-- ROM selection per configuration.
-- **Dual HostFS drives** – Per-machine HostFS plus a common Shared drive for cross-machine file sharing.
-- Access/ShareFS networking support for file sharing between emulated machines.
-- **Full FPA emulation** – Complete FPA10 floating-point coprocessor with all operations and cycle timing (see below).
-- **Pixel Perfect scaling** – Integer scaling option for sharp pixels without blur.
-- **Built-in VNC server** – Remote desktop access using libvncserver (Linux). Enable via Settings → VNC Server.
-- **Sound mute toggle** – Quickly mute/unmute emulator audio.
-- **Recent disc images** – Quick access menus for recently used floppy and CD-ROM images.
-- **Floppy eject actions** – Eject floppy discs via menu or keyboard shortcuts.
-- In-depth machine inspector and debugger tooling not present upstream.
-- Comprehensive keyboard shortcuts for all major functions.
-- Dynarec pause logic patched so debugger operations are consistent across cores.
-- Custom ARM cross-assembler toolchain support for building RISC OS modules.
+Open **Debug → Machine Inspector…** (or use the toolbar button).
 
-## Keyboard shortcuts
-| Shortcut | Action |
+| Tab | Contents |
 | --- | --- |
-| **Ctrl+S** | Save screenshot |
-| **Ctrl+R** | Reset machine |
-| **Ctrl+Q** | Quit emulator |
-| **Ctrl+1** | Load floppy disc into drive :0 |
-| **Ctrl+2** | Load floppy disc into drive :1 |
-| **Ctrl+Shift+1** | Eject floppy from drive :0 |
-| **Ctrl+Shift+2** | Eject floppy from drive :1 |
-| **Ctrl+,** | Open Settings/Configure dialog |
-| **F10** | Toggle sound mute |
-| **F11** | Toggle full-screen mode |
-| **F5** | Run (resume emulation) |
-| **F6** | Pause emulation |
-| **F7** | Single step |
-| **F8** | Step ×5 |
-| **Ctrl+I** | Open Machine Inspector |
-| **F1** | Open online manual |
+| **CPU** | Registers R0–R15, CPSR, mode, MMU state, dynarec/interpreter, performance |
+| **Disassembly** | ARM disassembly at a chosen address, optional follow-PC |
+| **Memory** | Hex dump of emulated memory at a chosen address |
+| **Debugger** | Run/Pause/Step, breakpoint and watchpoint lists, last halt reason |
+| **Peripherals** | VIDC, IOMD IRQ/timers, floppy, IDE, podule slot summary |
+
+Auto-refresh runs every 500 ms by default. Breakpoints and watchpoints work while
+the dynarec is active — `arm_dynarec.c` checks `debugger_requires_instruction_hook()`
+before executing translated blocks.
+
+---
+
+## Serial and parallel ports
+
+Configure via **Settings → Serial…** and **Settings → Parallel…**. The Risc PC has a
+single hardware serial port (the 16550 UART at `0x3F8`), so only one **Serial** port
+is exposed.
+
+| Port | Modes |
+| --- | --- |
+| **Serial (0x3F8)** | Disabled, log to file, TCP modem (telnet) |
+| **Parallel (LPT)** | Disabled, log to file, virtual printer |
+
+- **Log to file** captures the raw byte stream the guest sends — handy for debugging
+  or capturing print/serial output.
+- **TCP modem** answers the Hayes AT command set and `ATDT host:port` opens a real TCP
+  connection. It speaks telnet and negotiates binary mode, so telnet BBSes work and
+  X/Y/ZMODEM transfers stay 8-bit clean. `+++` (guard-timed) returns to command mode;
+  `ATH` hangs up.
+- **Virtual printer** writes `.prn` files to a chosen folder
+  (default: `machines/<name>/printjobs/`); with Ghostscript support, enable **Also
+  create PDF files** for automatic conversion.
+
+Physical host passthrough (`/dev/tty*`) is not yet implemented. Full details,
+including AT commands and how RISC OS drives each port, are in
+[docs/peripherals.md](docs/peripherals.md).
+
+---
+
+## Keyboard and host controls
+
+RPCEmu does **not** bind any host keyboard shortcuts, so every key — including the
+function keys (**F12** for the RISC OS command line, etc.) and Ctrl combinations —
+passes straight through to RISC OS. All emulator actions (screenshot, reset, floppy
+load/eject, full-screen, mute, machine settings, and the debugger Run/Pause/Step
+controls) are available from the menus and the toolbar instead.
+
+| Key | Action |
+| --- | --- |
+| **Ctrl+End** | Release the captured mouse, or exit full-screen |
+
+The toolbar provides one-click access to screenshot, floppy load, CD-ROM ISO load,
+reset, mute, full-screen, machine settings, and debugger controls.
+
+---
 
 ## FPA (Floating Point Accelerator) emulation
-This fork includes complete FPA10 coprocessor emulation, enabling RISC OS applications that use hardware floating-point to run correctly. The implementation includes:
 
-### Supported operations
-| Category | Operations |
-| --- | --- |
-| **Dyadic** | ADF, MUF, SUF, RSF, DVF, RDF, POW, RPW, RMF, FML, FDV, FRD, POL |
-| **Monadic** | MVF, MNF, ABS, RND, SQT, LOG, LGN, EXP, SIN, COS, TAN, ASN, ACS, ATN, URD, NRM |
-| **Conversion** | FIX (float→int), FLT (int→float) with all IEEE rounding modes |
-| **Comparison** | CMF, CMFE, CNF, CNFE with proper NaN exception handling |
-| **Transfer** | LDF, STF, LFM, SFM (load/store single and multiple) |
+Complete FPA10 coprocessor emulation in `src/fpa.c`:
 
-### Features
-- **Cycle-accurate timing** – Each operation has appropriate cycle costs (e.g., 10 cycles for load/store, 150 cycles for transcendental functions like SIN/COS/TAN).
-- **IEEE rounding modes** – FIX, RND, and URD support all four IEEE 754 rounding modes (nearest, +∞, −∞, zero).
-- **NaN handling** – Comparison operations correctly set the V flag for unordered (NaN) comparisons.
-- **Dynarec integration** – FPA works with both the interpreter and dynamic recompiler.
+- **Dyadic:** ADF, MUF, SUF, RSF, DVF, RDF, POW, RPW, RMF, FML, FDV, FRD, POL
+- **Monadic:** MVF, MNF, ABS, RND, SQT, LOG, LGN, EXP, SIN, COS, TAN, ASN, ACS, ATN, URD, NRM
+- **Conversion:** FIX, FLT (all IEEE rounding modes)
+- **Comparison:** CMF, CMFE, CNF, CNFE with NaN handling
+- **Transfer:** LDF, STF, LFM, SFM
 
-### Compatibility notes
-- Ensure 16-bit sound is enabled in RISC OS configuration for correct audio playback when using FPA-intensive applications.
-- Some applications (e.g., !AMPlayer) may exhibit timing-sensitive behaviour; if issues occur, test with the interpreter mode.
- 
+Cycle costs are modelled (e.g. 10 cycles for load/store, 150 for SIN/COS/TAN).
+Works with both interpreter and dynarec. See [docs/dynarec.md](docs/dynarec.md) for
+how the JIT is built and when it falls back to interpretation.
+
+---
+
+## Differences from upstream RPCEmu
+
+- wxWidgets front-end with machine selector, toolbar, and integrated debugger
+- Multi-machine configuration with isolated per-machine storage
+- Quick machine switching and recent-machines menu
+- Dual HostFS drives (per-machine + shared)
+- Access/ShareFS broadcast relay for NAT networking
+- Full FPA10 emulation with cycle timing
+- Pixel Perfect integer scaling
+- Built-in VNC server
+- Virtual printer with optional Ghostscript PDF conversion
+- Serial log-to-file and a real telnet TCP modem (dial BBSes, 8-bit-clean transfers)
+- Machine Inspector with disassembly and memory browser
+- Dynarec debugger hooks for consistent breakpoint/watchpoint behaviour
+- CMake build system for Linux (amd64 and arm64)
+
+---
+
 ## Troubleshooting
+
 | Symptom | Remedy |
 | --- | --- |
-| Emulator launches without a window | Ensure Qt 5 runtime libs are discoverable; this fork delays snapshot requests to avoid deadlock, so missing Qt plugins are the usual culprit. |
-| No network connectivity | Confirm SLiRP support was compiled in (`CONFIG_SLIRP`) and NAT rules are configured. |
-| ROM not found | Ensure ROM files are placed in the `roms/` directory and selected in the machine configuration. |
-| Machine data not persisting | Check that the `machines/<name>/` directory exists and is writable. |
+| Window does not appear / configs not found | Run from the project root or a staged release directory |
+| No audio | Ensure PulseAudio or PipeWire is running (SDL2) |
+| No network | Select NAT in machine settings; SLiRP is always compiled in on Linux |
+| ROM not found | Place ROM files in `roms/<subdir>/` and select the folder in machine settings |
+| Machine data not persisting | Check that `machines/<name>/` exists and is writable |
+| VNC option missing | Rebuild with `libvncserver-dev` installed |
+| PDF conversion unavailable | Install `libgs-dev` and rebuild; runtime needs Ghostscript resource files |
+| Diagnostic log | See `rpclog.txt` in the data directory |
+
+---
 
 ## Contributing
-Issues and pull requests are welcome, especially around debugger/inspector features.
 
-## License & credits
-- Licensed under the **GNU General Public License v2**. See `COPYING` for details.
+Issues and pull requests are welcome, especially around debugger, inspector, and
+networking features.
+
+---
+
+## License and credits
+
+- Licensed under the **GNU General Public License v2**. See `COPYING`.
 - Original emulator by the RPCEmu contributors.
- 
+- Spork Edition enhancements by Andrew Timmins and contributors.

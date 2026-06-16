@@ -146,11 +146,22 @@ void fpaopcode(uint32_t opcode)
                                 if (temp[0]&0x7FFF) temp[1]|=0x80000000;
                                 len=3;
                                 break;
+                                case 0x408000: /*Packed decimal*/
+                                *tf2=fparegs[FD];
+                                temp[0]=temp[5]&0x80000000;
+                                tempi=((temp[5]>>20)&0x7FF)-1023+16383;
+                                temp[0]|=(tempi&0x7FFF);
+                                temp[1]=(temp[5]&0xFFFFF)<<11;
+                                temp[1]|=((temp[4]>>21)&0x7FF);
+                                temp[2]=temp[4]<<11;
+                                if (temp[0]&0x7FFF) temp[1]|=0x80000000;
+                                temp[3]=0;
+                                len = (fpsr & 0x800) ? 4 : 3;
+                                break;
                                 default:
-/*                                arm.reg[15]+=8;
+                                arm.reg[15]+=8;
                                 arm_exception_undefined();
-                                return;*/
-                                fatal("Bad LDF/STF size %08X %08X\n", opcode & 0x408000, opcode);
+                                return;
                         }
 //                        rpclog("Address %07X len %i\n",addr,len);
                         if (opcode&0x100000)
@@ -168,6 +179,12 @@ void fpaopcode(uint32_t opcode)
                                         temp[0] = mem_read32(addr);
                                         temp[1] = mem_read32(addr + 4);
                                         temp[2] = mem_read32(addr + 8);
+                                        break;
+                                        case 4:
+                                        temp[0] = mem_read32(addr);
+                                        temp[1] = mem_read32(addr + 4);
+                                        temp[2] = mem_read32(addr + 8);
+                                        temp[3] = mem_read32(addr + 12);
                                         break;
                                 }
                                 switch (opcode&0x408000)
@@ -195,6 +212,17 @@ void fpaopcode(uint32_t opcode)
 //                                        fparegs[FD]=*tf;
 //                                        rpclog("F%i = %f\n",FD,(double)fparegs[FD]);
                                         break;
+                                        case 0x408000: /*Packed decimal*/
+                                        temp[4]=temp[2]>>11;
+                                        temp[4]|=(temp[1]<<21);
+                                        temp[5]=(temp[1]&~0x80000000)>>11;
+                                        tempi=(temp[0]&0x7FFF)-16383;
+                                        len=((tempi>0)?tempi:-tempi)&0x3FF;
+                                        tempi=((tempi>0)?len:-len)+1023;
+                                        temp[5]|=(tempi<<20);
+                                        temp[5]|=(temp[0]&0x80000000);
+                                        fparegs[FD]=*tf2;
+                                        break;
                                 }
                         }
                         else
@@ -212,6 +240,12 @@ void fpaopcode(uint32_t opcode)
                                         mem_write32(addr, temp[0]);
                                         mem_write32(addr + 4, temp[1]);
                                         mem_write32(addr + 8, temp[2]);
+                                        break;
+                                        case 4:
+                                        mem_write32(addr, temp[0]);
+                                        mem_write32(addr + 4, temp[1]);
+                                        mem_write32(addr + 8, temp[2]);
+                                        mem_write32(addr + 12, temp[3]);
                                         break;
                                 }
                         }

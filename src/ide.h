@@ -29,6 +29,8 @@ extern uint8_t readide(uint16_t addr);
 extern uint16_t readidew(void);
 extern void callbackide(void);
 extern void resetide(void);
+extern void ide_reload_images(void);
+extern int ide_attached_hdd_count(void);
 
 /*ATAPI stuff*/
 typedef struct ATAPI
