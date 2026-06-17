@@ -416,7 +416,7 @@ wxString MachineInspectorWindow::MakeSummary(const MachineSnapshot &snapshot) co
 	if (snapshot.debug_paused) {
 		debug_state = "Paused";
 	} else if (snapshot.debug_pause_requested) {
-		debug_state = "Pausing…";
+		debug_state = wxString::FromUTF8("Pausing\xE2\x80\xA6");
 	} else {
 		debug_state = "Running";
 	}
@@ -522,7 +522,7 @@ void MachineInspectorWindow::UpdateDebuggerUi(const MachineSnapshot &snapshot)
 		                          FormatHex(snapshot.debug_halt_pc),
 		                          FormatHex(snapshot.debug_halt_opcode));
 	} else {
-		const wxString state = pausing ? "Pausing…" : "Running";
+		const wxString state = pausing ? wxString::FromUTF8("Pausing\xE2\x80\xA6") : wxString("Running");
 		status = wxString::Format("Debugger: %s\nLast PC %s | Last opcode %s",
 		                          state,
 		                          FormatHex(snapshot.debug_last_pc),

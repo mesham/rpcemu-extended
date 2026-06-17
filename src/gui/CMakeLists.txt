@@ -5,6 +5,8 @@ set(GUI_SOURCES
     data_paths.cpp
     main_frame.cpp
     main_frame_menus.cpp
+    headless_bridge.cpp
+    headless_main.cpp
     emulator_panel.cpp
     emulator_host.cpp
     emulator_snapshot.cpp

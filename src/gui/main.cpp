@@ -1,9 +1,13 @@
 #include <wx/wx.h>
 
+#include <cstdio>
+#include <cstring>
+
 #include "data_paths.h"
 #include "config_paths.h"
 #include "config_selector_dialog.h"
 #include "main_frame.h"
+#include "headless_main.h"
 
 extern "C" {
 #include "rpcemu.h"
@@ -14,7 +18,12 @@ public:
 	bool OnInit() override;
 };
 
-wxIMPLEMENT_APP(RpcemuApp);
+/*
+ * No wxIMPLEMENT_APP here: we provide our own main() so that headless mode can
+ * run without ever constructing a wxApp (and therefore without gtk_init() and a
+ * display connection). The GUI path is reached via wxEntry() below.
+ */
+wxIMPLEMENT_APP_NO_MAIN(RpcemuApp);
 
 bool RpcemuApp::OnInit()
 {
@@ -40,4 +49,54 @@ bool RpcemuApp::OnInit()
 	rpcemu_start();
 	frame->StartEmulator();
 	return true;
+}
+
+int main(int argc, char **argv)
+{
+	bool headless = false;
+	bool list_machines = false;
+	bool show_help = false;
+	const char *machine_name = nullptr;
+
+	for (int i = 1; i < argc; i++) {
+		const char *arg = argv[i];
+
+		if (strcmp(arg, "--headless") == 0) {
+			headless = true;
+		} else if (strcmp(arg, "--list-machines") == 0) {
+			list_machines = true;
+		} else if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
+			show_help = true;
+		} else if (strcmp(arg, "--machine") == 0) {
+			if (i + 1 < argc) {
+				machine_name = argv[++i];
+			} else {
+				fprintf(stderr, "error: --machine requires a machine name.\n");
+				return 2;
+			}
+		} else if (strncmp(arg, "--machine=", 10) == 0) {
+			machine_name = arg + 10;
+		}
+		/* Any other argument (e.g. --verbose) is left for the GUI wxApp. */
+	}
+
+	/* These paths run entirely without wxWidgets, so they never initialise GTK
+	   and work on a system with no display present. */
+	if (show_help) {
+		HeadlessPrintUsage(argv[0]);
+		return 0;
+	}
+	if (list_machines) {
+		return HeadlessListMachines();
+	}
+	if (headless) {
+		return RunHeadless(machine_name);
+	}
+	if (machine_name != nullptr) {
+		fprintf(stderr, "error: --machine is only valid together with --headless.\n");
+		return 2;
+	}
+
+	/* Normal graphical launch. */
+	return wxEntry(argc, argv);
 }

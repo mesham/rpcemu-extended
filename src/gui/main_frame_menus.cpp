@@ -25,6 +25,43 @@ void BindMenuItem(wxMenu *menu, int id, MainFrame *frame, void (MainFrame::*hand
 	menu->Bind(wxEVT_MENU, handler, frame, id);
 }
 
+/*
+ * Rebuild a "recent items" submenu from scratch: one enabled entry per recent
+ * item (using fixed per-slot IDs so the existing id-based bindings still fire),
+ * or a single disabled placeholder when the list is empty, followed by a
+ * separator and the Clear command. Rebuilding avoids leaving empty-label menu
+ * items around (which wxWidgets asserts on) and never shows stale entries.
+ */
+void PopulateRecentMenu(wxMenu *menu, const std::vector<std::string> &recent,
+                        int max_items, int base_id, int clear_id,
+                        const wxString &clear_label, const wxString &empty_label,
+                        bool use_basename)
+{
+	while (menu->GetMenuItemCount() > 0) {
+		menu->Delete(menu->FindItemByPosition(0));
+	}
+
+	int num_recent = static_cast<int>(recent.size());
+	if (num_recent > max_items) {
+		num_recent = max_items;
+	}
+
+	if (num_recent == 0) {
+		wxMenuItem *placeholder = menu->Append(wxID_ANY, empty_label);
+		placeholder->Enable(false);
+	} else {
+		for (int i = 0; i < num_recent; ++i) {
+			const wxString entry = wxString::FromUTF8(recent[static_cast<size_t>(i)]);
+			const wxString text = use_basename ? wxFileName(entry).GetFullName() : entry;
+			const wxString accel = (i < 9) ? wxString::Format("&%d", i + 1) : wxString("&0");
+			menu->Append(base_id + i, wxString::Format("%s %s", accel, text));
+		}
+	}
+
+	menu->AppendSeparator();
+	menu->Append(clear_id, clear_label);
+}
+
 } // namespace
 
 void MainFrame::BindMenuOpenClose(wxMenu *menu)
@@ -57,13 +94,8 @@ void MainFrame::BuildMenus()
 	file_menu->AppendSeparator();
 
 	auto *recent_machines_menu = new wxMenu;
-	for (int i = 0; i < MaxRecentMachines; ++i) {
-		const int id = ID_MENU_RECENT_MACHINE_0 + i;
-		recent_machine_items_[i] = recent_machines_menu->Append(id, wxEmptyString);
-		recent_machine_items_[i]->Enable(false);
-	}
-	recent_machines_menu->AppendSeparator();
-	recent_machines_menu->Append(ID_MENU_CLEAR_RECENT_MACHINES, "Clear Recent Machines");
+	recent_machines_menu_ = recent_machines_menu;
+	/* Contents are filled in by UpdateRecentMachinesMenu(); see below. */
 	file_menu->AppendSubMenu(recent_machines_menu, "Recent Machines");
 
 	file_menu->AppendSeparator();
@@ -84,13 +116,8 @@ void MainFrame::BuildMenus()
 	floppy_menu->AppendSeparator();
 
 	auto *recent_floppies_menu = new wxMenu;
-	for (int i = 0; i < MaxRecentFloppies; ++i) {
-		const int id = ID_MENU_RECENT_FLOPPY_0 + i;
-		recent_floppy_items_[i] = recent_floppies_menu->Append(id, wxEmptyString);
-		recent_floppy_items_[i]->Enable(false);
-	}
-	recent_floppies_menu->AppendSeparator();
-	recent_floppies_menu->Append(ID_MENU_CLEAR_RECENT_FLOPPIES, "Clear Recent Images");
+	recent_floppies_menu_ = recent_floppies_menu;
+	/* Contents are filled in by UpdateRecentFloppiesMenu(); see below. */
 	floppy_menu->AppendSubMenu(recent_floppies_menu, "Recent Images");
 	disc_menu->AppendSubMenu(floppy_menu, "Floppy");
 
@@ -102,13 +129,8 @@ void MainFrame::BuildMenus()
 	cdrom_menu->AppendSeparator();
 
 	auto *recent_cdroms_menu = new wxMenu;
-	for (int i = 0; i < MaxRecentCDROMs; ++i) {
-		const int id = ID_MENU_RECENT_CDROM_0 + i;
-		recent_cdrom_items_[i] = recent_cdroms_menu->Append(id, wxEmptyString);
-		recent_cdrom_items_[i]->Enable(false);
-	}
-	recent_cdroms_menu->AppendSeparator();
-	recent_cdroms_menu->Append(ID_MENU_CLEAR_RECENT_CDROMS, "Clear Recent Images");
+	recent_cdroms_menu_ = recent_cdroms_menu;
+	/* Contents are filled in by UpdateRecentCdromsMenu(); see below. */
 	cdrom_menu->AppendSubMenu(recent_cdroms_menu, "Recent Images");
 	disc_menu->AppendSubMenu(cdrom_menu, "CD-ROM");
 
@@ -147,7 +169,10 @@ void MainFrame::BuildMenus()
 	debug_pause_item_ = debug_menu->Append(ID_MENU_DEBUG_PAUSE, "Pause");
 	debug_menu->AppendSeparator();
 	debug_step_item_ = debug_menu->Append(ID_MENU_DEBUG_STEP, "Step");
-	debug_step5_item_ = debug_menu->Append(ID_MENU_DEBUG_STEP5, "Step ×5");
+	/* Decode the "×" explicitly from UTF-8 so the label is correct regardless of
+	   the C locale; a narrow non-ASCII literal converts to an empty string under
+	   a non-UTF-8 locale, which wxWidgets then asserts on. */
+	debug_step5_item_ = debug_menu->Append(ID_MENU_DEBUG_STEP5, wxString::FromUTF8("Step \xC3\x97" "5"));
 	debug_menu->AppendSeparator();
 	debug_menu->Append(ID_MENU_MACHINE_INSPECTOR, "Machine Inspector...");
 
@@ -306,72 +331,32 @@ void MainFrame::BuildStatusBar()
 
 void MainFrame::UpdateRecentMachinesMenu()
 {
-	const std::vector<std::string> recent = GetRecentMachines();
-	int num_recent = static_cast<int>(recent.size());
-	if (num_recent > MaxRecentMachines) {
-		num_recent = MaxRecentMachines;
+	if (recent_machines_menu_ == nullptr) {
+		return;
 	}
-
-	for (int i = 0; i < MaxRecentMachines; ++i) {
-		if (recent_machine_items_[i] == nullptr) {
-			continue;
-		}
-		if (i < num_recent) {
-			recent_machine_items_[i]->SetItemLabel(
-			    wxString::Format("&%d %s", i + 1, wxString::FromUTF8(recent[static_cast<size_t>(i)])));
-			recent_machine_items_[i]->Enable(true);
-		} else {
-			recent_machine_items_[i]->Enable(false);
-		}
-	}
+	PopulateRecentMenu(recent_machines_menu_, GetRecentMachines(), MaxRecentMachines,
+	                   ID_MENU_RECENT_MACHINE_0, ID_MENU_CLEAR_RECENT_MACHINES,
+	                   "Clear Recent Machines", "(No recent machines)", false);
 }
 
 void MainFrame::UpdateRecentFloppiesMenu()
 {
-	const std::vector<std::string> recent = GetRecentFloppies();
-	int num_recent = static_cast<int>(recent.size());
-	if (num_recent > MaxRecentFloppies) {
-		num_recent = MaxRecentFloppies;
+	if (recent_floppies_menu_ == nullptr) {
+		return;
 	}
-
-	for (int i = 0; i < MaxRecentFloppies; ++i) {
-		if (recent_floppy_items_[i] == nullptr) {
-			continue;
-		}
-		if (i < num_recent) {
-			const wxString path = wxString::FromUTF8(recent[static_cast<size_t>(i)]);
-			const wxString filename = wxFileName(path).GetFullName();
-			const wxString accel = (i < 9) ? wxString::Format("&%d", i + 1) : "&0";
-			recent_floppy_items_[i]->SetItemLabel(wxString::Format("%s %s", accel, filename));
-			recent_floppy_items_[i]->Enable(true);
-		} else {
-			recent_floppy_items_[i]->Enable(false);
-		}
-	}
+	PopulateRecentMenu(recent_floppies_menu_, GetRecentFloppies(), MaxRecentFloppies,
+	                   ID_MENU_RECENT_FLOPPY_0, ID_MENU_CLEAR_RECENT_FLOPPIES,
+	                   "Clear Recent Images", "(No recent images)", true);
 }
 
 void MainFrame::UpdateRecentCdromsMenu()
 {
-	const std::vector<std::string> recent = GetRecentCDROMs();
-	int num_recent = static_cast<int>(recent.size());
-	if (num_recent > MaxRecentCDROMs) {
-		num_recent = MaxRecentCDROMs;
+	if (recent_cdroms_menu_ == nullptr) {
+		return;
 	}
-
-	for (int i = 0; i < MaxRecentCDROMs; ++i) {
-		if (recent_cdrom_items_[i] == nullptr) {
-			continue;
-		}
-		if (i < num_recent) {
-			const wxString path = wxString::FromUTF8(recent[static_cast<size_t>(i)]);
-			const wxString filename = wxFileName(path).GetFullName();
-			const wxString accel = (i < 9) ? wxString::Format("&%d", i + 1) : "&0";
-			recent_cdrom_items_[i]->SetItemLabel(wxString::Format("%s %s", accel, filename));
-			recent_cdrom_items_[i]->Enable(true);
-		} else {
-			recent_cdrom_items_[i]->Enable(false);
-		}
-	}
+	PopulateRecentMenu(recent_cdroms_menu_, GetRecentCDROMs(), MaxRecentCDROMs,
+	                   ID_MENU_RECENT_CDROM_0, ID_MENU_CLEAR_RECENT_CDROMS,
+	                   "Clear Recent Images", "(No recent images)", true);
 }
 
 void MainFrame::SyncSettingsMenuChecks()

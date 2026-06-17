@@ -669,7 +669,7 @@ void MachineEditDialog::CreateHardDisc(int drive, int size_mb)
 
 	wxString message = wxString::Format("Hard disc %d created (%d MB).", drive, size_mb);
 	if (emulator_running_) {
-		message += "\n\nUse Machine → Reset (not RISC OS Restart) so RPCEmu reloads the IDE image.";
+		message += wxString::FromUTF8("\n\nUse Machine \xE2\x86\x92 Reset (not RISC OS Restart) so RPCEmu reloads the IDE image.");
 	}
 	wxMessageBox(message, "Create HardDisc", wxOK | wxICON_INFORMATION, this);
 }

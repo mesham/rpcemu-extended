@@ -225,9 +225,9 @@ private:
 	EmulatorPanel *panel_ = nullptr;
 	wxToolBar *tool_bar_ = nullptr;
 
-	wxMenuItem *recent_machine_items_[MaxRecentMachines] = {};
-	wxMenuItem *recent_floppy_items_[MaxRecentFloppies] = {};
-	wxMenuItem *recent_cdrom_items_[MaxRecentCDROMs] = {};
+	wxMenu *recent_machines_menu_ = nullptr;
+	wxMenu *recent_floppies_menu_ = nullptr;
+	wxMenu *recent_cdroms_menu_ = nullptr;
 	wxMenuItem *mute_menu_item_ = nullptr;
 	wxMenuItem *fullscreen_menu_item_ = nullptr;
 	wxMenuItem *integer_scaling_menu_item_ = nullptr;

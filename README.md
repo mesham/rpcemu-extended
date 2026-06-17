@@ -19,6 +19,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Full FPA10 emulation** — floating-point coprocessor with cycle-accurate timing; works with interpreter and dynarec.
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client.
+- **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: needs no X11/Wayland, so it runs on a headless server. See [Headless mode](#headless-mode).
 - **Parallel port** — log raw output to a file, or a virtual printer that captures jobs to `.prn` files with optional in-process PDF conversion via Ghostscript.
 - **Serial port** — log to file, or a TCP "modem" that dials real telnet BBSes (`ATDT host:port`) with a telnet client layer and 8-bit-clean X/Y/ZMODEM transfers. See [docs/peripherals.md](docs/peripherals.md).
 - **Machine Inspector** — live CPU, disassembly, memory, peripheral, and debugger views with auto-refresh.
@@ -129,6 +130,31 @@ needed for the portable tarball.)
 3. Select a machine and click **Start**.
 4. Place licensed RISC OS ROM files in `roms/<subdir>/` and select the ROM folder in
    the machine editor.
+
+### Headless mode
+
+A machine can be run without the GUI window and accessed entirely over the
+built-in VNC server — useful for servers or always-on machines:
+
+```bash
+./rpcemu-recompiler --headless --machine <name>
+```
+
+- `--machine <name>` selects a machine by its config name (the file in `configs/`,
+  with or without the `.cfg` suffix). It is required in headless mode, since there
+  is no interactive selector.
+- `--list-machines` prints the available machine names and exits.
+- `--help` (or `-h`) prints usage and exits. All three of these run without a display.
+- The chosen machine **must have the VNC server enabled** (`vnc_enabled=1`) in its
+  configuration; headless mode refuses to start otherwise, as there would be no way
+  to reach the machine. The VNC port/password come from that same config.
+- Press **Ctrl-C** (or send `SIGTERM`) to shut down cleanly — CMOS, disc images, and
+  configuration are saved on exit, just as when closing the GUI window.
+
+Headless mode is genuinely display-less: it is handled before any GUI toolkit is
+initialised, so it needs **no X11/Wayland display** and runs on a server with no
+desktop installed. Data is located via `$RPCEMU_DATADIR`, else the executable or
+current directory if it contains a `configs/` folder, else the install prefix.
 
 ---
 
@@ -254,6 +280,7 @@ how the JIT is built and when it falls back to interpretation.
 - Full FPA10 emulation with cycle timing
 - Pixel Perfect integer scaling
 - Built-in VNC server
+- Headless mode for display-less servers (run a machine over VNC with no GUI)
 - Virtual printer with optional Ghostscript PDF conversion
 - Serial log-to-file and a real telnet TCP modem (dial BBSes, 8-bit-clean transfers)
 - Machine Inspector with disassembly and memory browser
