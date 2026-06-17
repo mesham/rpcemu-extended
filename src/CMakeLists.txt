@@ -94,6 +94,12 @@ endif()
 
 target_link_libraries(rpcemu_core PUBLIC pthread)
 
+# Expose the JIT test hooks (codegen_test_compile/_interp) for the differential
+# flag tester. amd64 dynarec only; releases can disable with RPCEMU_BUILD_TESTS=OFF.
+if(RPCEMU_BUILD_TESTS AND RPCEMU_DYNAREC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+    target_compile_definitions(rpcemu_core PRIVATE RPCEMU_JIT_TEST)
+endif()
+
 if(RPCEMU_ENABLE_GHOSTPDL)
     if(DEFINED ENV{GHOSTPDL_PREFIX})
         set(_ghost_prefix "$ENV{GHOSTPDL_PREFIX}")

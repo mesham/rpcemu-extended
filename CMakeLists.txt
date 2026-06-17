@@ -13,6 +13,7 @@ option(RPCEMU_DYNAREC "Build with ARM dynamic recompiler" ON)
 option(RPCEMU_ENABLE_WARNINGS "Enable extra compiler warnings" ON)
 option(RPCEMU_ENABLE_GHOSTPDL "Enable in-process Ghostscript PDF conversion" ON)
 option(RPCEMU_ENABLE_VNC "Enable VNC server support (requires libvncserver)" ON)
+option(RPCEMU_BUILD_TESTS "Build unit tests (amd64 dynarec only)" ON)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
     message(FATAL_ERROR "RPCEmu (Spork Edition) supports Linux only.")
@@ -22,7 +23,15 @@ if(RPCEMU_ENABLE_WARNINGS)
     add_compile_options(-Wall -Wextra -Werror=switch -fno-common)
 endif()
 
+if(RPCEMU_BUILD_TESTS)
+    enable_testing()
+endif()
+
 add_subdirectory(src)
+
+if(RPCEMU_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
 
 install(DIRECTORY configs/ DESTINATION share/rpcemu/configs)
 install(DIRECTORY resources/ DESTINATION share/rpcemu/resources)

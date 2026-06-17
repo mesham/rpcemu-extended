@@ -20,10 +20,8 @@
 
 int blockend;
 
-/*Preliminary FPA emulation. This works to an extent - !Draw works with it, !SICK
-  seems to (FPA Whetstone scores are around 100x without), but !AMPlayer doesn't
-  work, and GCC stuff tends to crash.*/
-//#define FPA
+/* FPA10 floating-point coprocessor emulation (see fpa.c). */
+#define FPA
 
 #include <stdio.h>
 #include <string.h>
@@ -883,3 +881,42 @@ arm_exec(void)
 
 	return 1000;
 }
+
+#ifdef RPCEMU_JIT_TEST
+/*
+ * Test-only hooks used by tests/test_jit_flags.c to validate the recompiler's
+ * native flag generation against the interpreter. Not built into the shipping
+ * emulator (guarded by RPCEMU_JIT_TEST).
+ */
+
+/**
+ * Recompile a single ARM instruction into a fresh JIT block, mirroring the
+ * per-instruction sequence used by arm_exec() when building blocks, and return
+ * a pointer to the block entry point (callable as void (*)(void)).
+ */
+void *
+codegen_test_compile(uint32_t opcode)
+{
+	const uint32_t pc = 0x00010000;
+
+	initcodeblock(pc);
+	generatepcinc(); /* clears lastjumppos, advances pcinc/inscount */
+	if ((opcode >> 28) != 0xe) {
+		generateflagtestandbranch(opcode, pcpsr);
+	}
+	generatecall(arm_opcode_fn(opcode), opcode, pcpsr);
+	endblock(opcode);
+
+	return (void *) &rcodeblock[codeblocknum[HASH(pc)]][BLOCKSTART];
+}
+
+/**
+ * Execute a single ARM instruction through the interpreter opcode handler -
+ * the reference implementation the recompiled code must match.
+ */
+void
+codegen_test_interp(uint32_t opcode)
+{
+	arm_opcode_fn(opcode)(opcode);
+}
+#endif /* RPCEMU_JIT_TEST */

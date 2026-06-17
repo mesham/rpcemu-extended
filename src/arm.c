@@ -18,10 +18,8 @@
   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-/*Preliminary FPA emulation. This works to an extent - !Draw works with it, !SICK
-  seems to (FPA Whetstone scores are around 100x without), but !AMPlayer doesn't
-  work, and GCC stuff tends to crash.*/
-//#define FPA
+/* FPA10 floating-point coprocessor emulation (see fpa.c). */
+#define FPA
 
 #include <stdio.h>
 #include <string.h>

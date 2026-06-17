@@ -131,6 +131,26 @@ The amd64 backend is largely ported from i386. Some emitted code still relies on
 32-bit absolute addresses; further tuning (register pinning, LDM/STM, chaining) is
 possible.
 
+### Flag-setting instructions (amd64)
+
+The amd64 backend recompiles the flag-setting data-processing and compare
+instructions inline rather than calling the interpreter. `gen_native_flags()`
+materialises ARM `NZCV` from the host `EFLAGS` produced by the operation (`SETcc`
++ `LAHF`), writing them into the cached R15 (26-bit) or `arm.reg[16]` (32-bit):
+
+- Arithmetic and compares — `ADDS`, `SUBS`, `RSBS`, `CMP`, `CMN` (register and
+  immediate). The ARM carry is the inverse of the host carry for subtract/compare.
+- Logical/move/test — `ANDS`, `EORS`, `ORRS`, `BICS`, `MOVS`, `MVNS`, `TST`, `TEQ`
+  — only when operand 2's shift cannot alter the carry (no register/immediate
+  shift, immediate rotate 0); otherwise they fall back to the interpreter.
+- `ADCS`/`SBCS`/`RSCS` are not yet recompiled (carry-in sourcing differs by mode)
+  and continue to use the interpreter.
+
+Correctness is covered by `tests/test_jit_flags.c` (run via `ctest`), which checks
+the recompiled output against the interpreter across carry/overflow edge cases in
+both 26- and 32-bit modes. The i386 backend does not yet have this and still calls
+the interpreter for flag-setting ops.
+
 ---
 
 ## Limitations

@@ -279,10 +279,10 @@ initcodeblock(uint32_t l)
 }
 
 static const int canrecompile[256] = {
-	1,0,1,0,1,0,0,0,1,0,0,0,0,0,0,0, // 00
-	0,0,0,0,0,0,0,0,1,0,1,0,1,0,1,0, // 10
-	1,0,1,0,1,0,0,0,1,0,0,0,0,0,0,0, // 20
-	0,0,0,0,0,0,0,0,1,0,1,0,1,0,1,0, // 30
+	1,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0, // 00
+	0,1,0,1,0,1,0,1,1,1,1,1,1,1,1,1, // 10
+	1,1,1,1,1,1,0,1,1,1,0,0,0,0,0,0, // 20
+	0,1,0,1,0,1,0,1,1,1,1,1,1,1,1,1, // 30
 
 	1,1,0,0,1,1,0,0,1,1,0,0,1,1,0,0, // 40
 	1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1, // 50
@@ -409,6 +409,76 @@ gen_data_proc_imm(uint32_t opcode, uint8_t op, uint32_t imm)
 		}
 		addbyte(0x05|op); addlong(imm); // OP $imm,%eax
 		gen_save_reg(RD, EAX);
+	}
+}
+
+/**
+ * Emit native code that materialises the ARM NZCV condition flags from the
+ * host EFLAGS produced by the immediately preceding operation, and merges
+ * them into the ARM flag word.
+ *
+ * Must be called while the host EFLAGS still hold the result of the operation
+ * (i.e. with no flag-altering instruction emitted in between). Clobbers EAX,
+ * EBX, ECX and EDX, none of which may hold a live value at this point.
+ *
+ * @param mode26      Non-zero if the flag word is the cached R15 (host R12),
+ *                    i.e. 26-bit mode; zero if it is arm.reg[16] in memory.
+ * @param set_cv      Non-zero for arithmetic ops (write N, Z, C and V);
+ *                    zero for logical ops (write only N and Z, preserve C/V).
+ * @param invert_carry Non-zero when the ARM carry is the inverse of the host
+ *                    carry flag, as for subtract/compare. Ignored if !set_cv.
+ */
+#ifdef RPCEMU_JIT_TEST
+/* Counts gen_native_flags() emissions so the differential tester can confirm
+   the inline native path was taken rather than a fallback C call. */
+unsigned long codegen_test_flag_emits = 0;
+#endif
+
+static void
+gen_native_flags(int mode26, int set_cv, int invert_carry)
+{
+#ifdef RPCEMU_JIT_TEST
+	codegen_test_flag_emits++;
+#endif
+	/* Capture the condition codes into byte registers first, while the host
+	   EFLAGS are still valid - SETcc only reads the flags, never writes. */
+	addbyte(0x0f); addbyte(0x98); addbyte(0xc1); // SETS %cl  (N <- SF)
+	addbyte(0x0f); addbyte(0x94); addbyte(0xc2); // SETZ %dl  (Z <- ZF)
+	if (set_cv) {
+		addbyte(0x0f); addbyte(0x90); addbyte(0xc0); // SETO %al  (V <- OF)
+		if (invert_carry) {
+			addbyte(0x0f); addbyte(0x93); addbyte(0xc3); // SETNC %bl (C <- !CF)
+		} else {
+			addbyte(0x0f); addbyte(0x92); addbyte(0xc3); // SETC %bl  (C <- CF)
+		}
+	}
+
+	/* Assemble NZCV into bits 31..28 of ECX (now free to clobber EFLAGS). */
+	addbyte(0x0f); addbyte(0xb6); addbyte(0xc9); // MOVZBL %cl,%ecx
+	addbyte(0x0f); addbyte(0xb6); addbyte(0xd2); // MOVZBL %dl,%edx
+	addbyte(0xc1); addbyte(0xe1); addbyte(31);   // SHL $31,%ecx  (N)
+	addbyte(0xc1); addbyte(0xe2); addbyte(30);   // SHL $30,%edx  (Z)
+	addbyte(0x09); addbyte(0xd1);                // OR %edx,%ecx
+	if (set_cv) {
+		addbyte(0x0f); addbyte(0xb6); addbyte(0xc0); // MOVZBL %al,%eax
+		addbyte(0x0f); addbyte(0xb6); addbyte(0xdb); // MOVZBL %bl,%ebx
+		addbyte(0xc1); addbyte(0xe0); addbyte(28);   // SHL $28,%eax  (V)
+		addbyte(0xc1); addbyte(0xe3); addbyte(29);   // SHL $29,%ebx  (C)
+		addbyte(0x09); addbyte(0xc1);                // OR %eax,%ecx
+		addbyte(0x09); addbyte(0xd9);                // OR %ebx,%ecx
+	}
+
+	/* Merge into the ARM flag word: flags = (flags & mask) | ECX. The mask
+	   preserves C and V for logical ops, or only the non-NZCV bits for
+	   arithmetic ops. */
+	if (mode26) {
+		addbyte(0x41); addbyte(0x81); addbyte(0xe4); // AND $mask,%r12d
+		addlong(set_cv ? 0x0fffffffu : 0x3fffffffu);
+		addbyte(0x41); addbyte(0x09); addbyte(0xcc); // OR %ecx,%r12d
+	} else {
+		addbyte(0x41); addbyte(0x81); addbyte(0x67); addbyte(16 << 2); // ANDL $mask,arm.reg[16]
+		addlong(set_cv ? 0x0fffffffu : 0x3fffffffu);
+		addbyte(0x41); addbyte(0x09); addbyte(0x4f); addbyte(16 << 2); // OR %ecx,arm.reg[16]
 	}
 }
 
@@ -773,8 +843,7 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 {
 	uint32_t rhs;
 	uint32_t offset;
-
-	NOT_USED(pcpsr);
+	const int mode26 = (pcpsr == &arm.reg[15]);
 
 	if (arm.arch_v4) {
 		if ((opcode & 0xe0000f0) == 0xb0) {
@@ -948,6 +1017,216 @@ recompile(uint32_t opcode, uint32_t *pcpsr)
 		if (RD == 15) return 0;
 		rhs = ~arm_imm(opcode);
 		genstoreimm(RD, rhs);
+		break;
+
+	/* Flag-setting data-processing and compare instructions. Arithmetic ops
+	   take N,Z,C,V from the host EFLAGS (gen_native_flags with set_cv). The
+	   ARM carry is the inverse of the host carry for subtract/compare. */
+
+	case 0x09: // ADDS reg
+		if (RD == 15) return 0;
+		if (!generate_shift(opcode)) return 0;
+		gen_data_proc_reg(opcode, X86_OP_ADD, 0);
+		gen_native_flags(mode26, 1, 0);
+		break;
+
+	case 0x05: // SUBS reg
+		if (RD == 15) return 0;
+		if (!generate_shift(opcode)) return 0;
+		gen_data_proc_reg(opcode, X86_OP_SUB, 1);
+		gen_native_flags(mode26, 1, 1);
+		break;
+
+	case 0x07: // RSBS reg
+		if (RD == 15 || RN == 15) return 0;
+		if (!generate_shift(opcode)) return 0; // operand -> EAX
+		addbyte(0x41); addbyte(0x2b); addbyte(0x47); addbyte(RN << 2); // SUB Rn,%eax  (operand - Rn)
+		gen_save_reg(RD, EAX);
+		gen_native_flags(mode26, 1, 1);
+		break;
+
+	case 0x29: // ADDS imm
+		if (RD == 15) return 0;
+		rhs = arm_imm(opcode);
+		gen_data_proc_imm(opcode, X86_OP_ADD, rhs);
+		gen_native_flags(mode26, 1, 0);
+		break;
+
+	case 0x25: // SUBS imm
+		if (RD == 15) return 0;
+		rhs = arm_imm(opcode);
+		gen_data_proc_imm(opcode, X86_OP_SUB, rhs);
+		gen_native_flags(mode26, 1, 1);
+		break;
+
+	case 0x27: // RSBS imm
+		if (RD == 15 || RN == 15) return 0;
+		rhs = arm_imm(opcode);
+		addbyte(0xb8); addlong(rhs); // MOV $rhs,%eax
+		addbyte(0x41); addbyte(0x2b); addbyte(0x47); addbyte(RN << 2); // SUB Rn,%eax
+		gen_save_reg(RD, EAX);
+		gen_native_flags(mode26, 1, 1);
+		break;
+
+	case 0x15: // CMP reg
+		if (RN == 15) return 0;
+		if (!generate_shift(opcode)) return 0; // operand -> EAX
+		gen_load_reg(RN, EDX);
+		addbyte(0x39); addbyte(0xc2); // CMP %eax,%edx  (Rn - operand)
+		gen_native_flags(mode26, 1, 1);
+		break;
+
+	case 0x17: // CMN reg
+		if (RN == 15) return 0;
+		if (!generate_shift(opcode)) return 0; // operand -> EAX
+		gen_load_reg(RN, EDX);
+		addbyte(0x01); addbyte(0xc2); // ADD %eax,%edx  (Rn + operand)
+		gen_native_flags(mode26, 1, 0);
+		break;
+
+	case 0x35: // CMP imm
+		if (RN == 15) return 0;
+		rhs = arm_imm(opcode);
+		gen_load_reg(RN, EAX);
+		addbyte(0x3d); addlong(rhs); // CMP $rhs,%eax  (Rn - rhs)
+		gen_native_flags(mode26, 1, 1);
+		break;
+
+	case 0x37: // CMN imm
+		if (RN == 15) return 0;
+		rhs = arm_imm(opcode);
+		gen_load_reg(RN, EAX);
+		addbyte(0x05); addlong(rhs); // ADD $rhs,%eax  (Rn + rhs)
+		gen_native_flags(mode26, 1, 0);
+		break;
+
+	/* Flag-setting logical and move/compare instructions. Recompiled only
+	   when the operand-2 shift cannot alter the carry (no register/immediate
+	   shift, immediate rotate of 0), so C and V are preserved unchanged. N
+	   and Z come from the result via gen_native_flags with set_cv == 0. */
+
+	case 0x01: // ANDS reg
+		if (RD == 15 || (opcode & 0xff0)) return 0;
+		if (!generate_shift(opcode)) return 0;
+		gen_data_proc_reg(opcode, X86_OP_AND, 0);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x03: // EORS reg
+		if (RD == 15 || (opcode & 0xff0)) return 0;
+		if (!generate_shift(opcode)) return 0;
+		gen_data_proc_reg(opcode, X86_OP_XOR, 0);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x19: // ORRS reg
+		if (RD == 15 || (opcode & 0xff0)) return 0;
+		if (!generate_shift(opcode)) return 0;
+		gen_data_proc_reg(opcode, X86_OP_OR, 0);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x1d: // BICS reg
+		if (RD == 15 || (opcode & 0xff0)) return 0;
+		if (!generate_shift(opcode)) return 0;
+		addbyte(0xf7); addbyte(0xd0); // NOT %eax
+		gen_data_proc_reg(opcode, X86_OP_AND, 0);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x1b: // MOVS reg
+		if (RD == 15 || (opcode & 0xff0)) return 0;
+		if (!generate_shift(opcode)) return 0; // Rm -> EAX
+		addbyte(0x85); addbyte(0xc0); // TEST %eax,%eax
+		gen_save_reg(RD, EAX);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x1f: // MVNS reg
+		if (RD == 15 || (opcode & 0xff0)) return 0;
+		if (!generate_shift(opcode)) return 0; // Rm -> EAX
+		addbyte(0xf7); addbyte(0xd0); // NOT %eax
+		addbyte(0x85); addbyte(0xc0); // TEST %eax,%eax
+		gen_save_reg(RD, EAX);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x11: // TST reg
+		if (RN == 15 || (opcode & 0xff0)) return 0;
+		if (!generate_shift(opcode)) return 0; // operand -> EAX
+		gen_load_reg(RN, EDX);
+		addbyte(0x21); addbyte(0xc2); // AND %eax,%edx
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x13: // TEQ reg
+		if (RN == 15 || (opcode & 0xff0)) return 0;
+		if (!generate_shift(opcode)) return 0; // operand -> EAX
+		gen_load_reg(RN, EDX);
+		addbyte(0x31); addbyte(0xc2); // XOR %eax,%edx
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x21: // ANDS imm
+		if (RD == 15 || (opcode & 0xf00)) return 0;
+		rhs = arm_imm(opcode);
+		gen_data_proc_imm(opcode, X86_OP_AND, rhs);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x23: // EORS imm
+		if (RD == 15 || (opcode & 0xf00)) return 0;
+		rhs = arm_imm(opcode);
+		gen_data_proc_imm(opcode, X86_OP_XOR, rhs);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x39: // ORRS imm
+		if (RD == 15 || (opcode & 0xf00)) return 0;
+		rhs = arm_imm(opcode);
+		gen_data_proc_imm(opcode, X86_OP_OR, rhs);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x3d: // BICS imm
+		if (RD == 15 || (opcode & 0xf00)) return 0;
+		rhs = ~arm_imm(opcode);
+		gen_data_proc_imm(opcode, X86_OP_AND, rhs);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x3b: // MOVS imm
+		if (RD == 15 || (opcode & 0xf00)) return 0;
+		rhs = arm_imm(opcode);
+		addbyte(0xb8); addlong(rhs);  // MOV $rhs,%eax
+		addbyte(0x85); addbyte(0xc0); // TEST %eax,%eax
+		gen_save_reg(RD, EAX);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x3f: // MVNS imm
+		if (RD == 15 || (opcode & 0xf00)) return 0;
+		rhs = ~arm_imm(opcode);
+		addbyte(0xb8); addlong(rhs);  // MOV $rhs,%eax
+		addbyte(0x85); addbyte(0xc0); // TEST %eax,%eax
+		gen_save_reg(RD, EAX);
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x31: // TST imm
+		if (RN == 15 || (opcode & 0xf00)) return 0;
+		rhs = arm_imm(opcode);
+		gen_load_reg(RN, EAX);
+		addbyte(0xa9); addlong(rhs); // TEST $rhs,%eax
+		gen_native_flags(mode26, 0, 0);
+		break;
+
+	case 0x33: // TEQ imm
+		if (RN == 15 || (opcode & 0xf00)) return 0;
+		rhs = arm_imm(opcode);
+		gen_load_reg(RN, EAX);
+		addbyte(0x35); addlong(rhs); // XOR $rhs,%eax
+		gen_native_flags(mode26, 0, 0);
 		break;
 
 	case 0x40: // STR Rd, [Rn], #-imm
