@@ -31,6 +31,8 @@ private:
 		ID_BREAKPOINT_REMOVE,
 		ID_WATCHPOINT_ADD,
 		ID_WATCHPOINT_REMOVE,
+		ID_TRACE_CONFIG,
+		ID_TRACE_CLEAR,
 	};
 
 	void BuildUi();
@@ -52,6 +54,8 @@ private:
 	void OnRemoveWatchpoint(wxCommandEvent &event);
 	void OnBreakpointSelection(wxCommandEvent &event);
 	void OnWatchpointSelection(wxCommandEvent &event);
+	void OnTraceConfigChanged(wxCommandEvent &event);
+	void OnTraceClear(wxCommandEvent &event);
 
 	void RefreshSnapshot();
 	void ApplySnapshot(const MachineSnapshot &snapshot);
@@ -64,6 +68,8 @@ private:
 	void UpdateDebuggerUi(const MachineSnapshot &snapshot);
 	void PopulateBreakpointList(const MachineSnapshot &snapshot);
 	void PopulateWatchpointList(const MachineSnapshot &snapshot);
+	void ApplyTraceConfig();
+	void DrainTraceEvents();
 
 	uint32_t ParseAddress(const wxString &text, bool *ok) const;
 
@@ -97,7 +103,21 @@ private:
 	wxChoice *watchpoint_size_choice_ = nullptr;
 	wxCheckBox *watchpoint_read_checkbox_ = nullptr;
 	wxCheckBox *watchpoint_write_checkbox_ = nullptr;
+	wxCheckBox *watchpoint_log_only_checkbox_ = nullptr;
 	wxButton *watchpoint_remove_button_ = nullptr;
+
+	wxCheckBox *trap_undefined_checkbox_ = nullptr;
+	wxCheckBox *trap_prefetch_checkbox_ = nullptr;
+	wxCheckBox *trap_data_abort_checkbox_ = nullptr;
+	wxCheckBox *log_exceptions_checkbox_ = nullptr;
+	wxCheckBox *swi_trace_checkbox_ = nullptr;
+	wxCheckBox *swi_halt_checkbox_ = nullptr;
+	wxTextCtrl *swi_filter_min_input_ = nullptr;
+	wxTextCtrl *swi_filter_max_input_ = nullptr;
+	wxTextCtrl *trace_view_ = nullptr;
+	wxCheckBox *trace_autoscroll_checkbox_ = nullptr;
+	wxStaticText *trace_dropped_label_ = nullptr;
+	uint32_t trace_dropped_total_ = 0;
 
 	uint32_t disasm_current_address_ = 0;
 	uint32_t memory_current_address_ = 0;

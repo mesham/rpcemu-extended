@@ -62,6 +62,8 @@ enum class EmuCommandType {
 	TakeSnapshot,
 	ReadMemory,
 	Disassemble,
+	SetDebugTraceConfig,
+	DrainTraceEvents,
 };
 
 struct EmuCommand {
@@ -80,6 +82,8 @@ struct EmuCommand {
 	uint32_t debug_size = 0;
 	bool debug_on_read = false;
 	bool debug_on_write = false;
+	bool debug_log_only = false;
+	DebugTraceConfig debug_trace_config{};
 };
 
 class EmulatorHost {
@@ -129,9 +133,11 @@ public:
 	void DebuggerAddBreakpoint(uint32_t address);
 	void DebuggerRemoveBreakpoint(uint32_t address);
 	void DebuggerClearBreakpoints();
-	void DebuggerAddWatchpoint(uint32_t address, uint32_t size, bool on_read, bool on_write);
+	void DebuggerAddWatchpoint(uint32_t address, uint32_t size, bool on_read, bool on_write, bool log_only);
 	void DebuggerRemoveWatchpoint(uint32_t address, uint32_t size, bool on_read, bool on_write);
 	void DebuggerClearWatchpoints();
+	void SetDebugTraceConfig(const DebugTraceConfig &cfg);
+	std::vector<DebugTraceEvent> DrainTraceEvents(uint32_t max, uint32_t *dropped_out);
 	MachineSnapshot TakeSnapshot();
 	size_t ReadMemory(uint32_t address, uint32_t length, uint8_t *buffer, size_t buffer_size);
 	std::string DisassembleAt(uint32_t address, int count);
@@ -174,6 +180,12 @@ private:
 	std::condition_variable disasm_cv_;
 	bool disasm_ready_ = false;
 	std::string disasm_result_{};
+
+	std::mutex trace_mutex_;
+	std::condition_variable trace_cv_;
+	bool trace_ready_ = false;
+	std::vector<DebugTraceEvent> trace_result_{};
+	uint32_t trace_dropped_ = 0;
 
 	std::mutex nat_rules_mutex_;
 	std::deque<PortForwardRule> pending_nat_rules_;

@@ -74,6 +74,10 @@ typedef struct MachineSnapshot {
 	uint32_t debug_watchpoint_count;
 	DebugWatchpointInfo debug_watchpoints[DEBUGGER_MAX_WATCHPOINTS];
 
+	DebugTraceConfig debug_trace_config;
+	uint32_t debug_trace_dropped;
+	uint32_t debug_trace_pending;
+
 	VIDCStateSnapshot vidc;
 	SuperIOStateSnapshot superio;
 	IDEStateSnapshot ide;

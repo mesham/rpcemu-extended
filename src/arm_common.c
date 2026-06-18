@@ -578,6 +578,11 @@ opSWI(uint32_t opcode)
 		swinum = arm.reg[12] & 0xdffff;
 	}
 
+	/* Debugger: trace/halt on SWI (gated to stay free when tracing is off) */
+	if (debugger_swi_trace_active) {
+		debugger_swi_hook(swinum, opcode);
+	}
+
 	/* Intercept RISC OS Portable SWIs to enable RPCEmu to sleep when
 	   RISC OS is idle */
 	if (config.cpu_idle) {

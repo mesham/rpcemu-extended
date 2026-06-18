@@ -145,6 +145,22 @@ static uint8_t debugger_hit_is_write = 0;
 static uint32_t debugger_step_remaining = 0;
 static int debugger_step_active = 0;
 
+/* Debug trace ring (single-writer: only touched on the emulator thread, both
+   when pushing events during execution and when draining during command
+   processing, so no locking is required). */
+#define DEBUGGER_TRACE_RING_SIZE 4096	/* must be a power of two */
+#define DEBUGGER_TRACE_RING_MASK (DEBUGGER_TRACE_RING_SIZE - 1)
+static DebugTraceEvent debugger_trace_ring[DEBUGGER_TRACE_RING_SIZE];
+static uint32_t debugger_trace_head = 0;	/**< next write index */
+static uint32_t debugger_trace_tail = 0;	/**< next read index */
+static uint32_t debugger_trace_dropped = 0;	/**< events lost to overflow */
+static uint32_t debugger_trace_seq = 0;		/**< monotonic event counter */
+static DebugTraceConfig debugger_trace_config;	/**< zero-initialised: all off */
+int debugger_swi_trace_active = 0;		/**< fast gate read from opSWI() */
+
+static void debugger_trace_push(uint32_t type, uint32_t pc, uint32_t opcode,
+	uint32_t arg0, uint32_t arg1, uint32_t arg2);
+
 #ifdef _DEBUG
 /**
  * UNIMPLEMENTEDFL
@@ -303,6 +319,14 @@ debugger_requires_instruction_hook(void)
 	if (debugger_watchpoint_count > 0) {
 		return 1;
 	}
+	/* Halting traps need the hooked path so the core stops once a trap has
+	   set debugger_paused from inside exception()/opSWI(). */
+	if (debugger_trace_config.trap_undefined ||
+	    debugger_trace_config.trap_prefetch_abort ||
+	    debugger_trace_config.trap_data_abort ||
+	    debugger_trace_config.swi_trace_halt) {
+		return 1;
+	}
 	return 0;
 }
 
@@ -392,12 +416,15 @@ debugger_clear_watchpoints(void)
 }
 
 int
-debugger_add_watchpoint(uint32_t address, uint32_t size, int on_read, int on_write)
+debugger_add_watchpoint(uint32_t address, uint32_t size, int on_read, int on_write, int log_only)
 {
 	if (size == 0) {
 		return 0;
 	}
-	if (debugger_watchpoint_index(address, size, on_read, on_write) >= 0) {
+	int index = debugger_watchpoint_index(address, size, on_read, on_write);
+	if (index >= 0) {
+		/* Already present; allow the log_only flag to be updated in place. */
+		debugger_watchpoints[index].log_only = (uint8_t) (log_only != 0);
 		return 1;
 	}
 	if (debugger_watchpoint_count >= DEBUGGER_MAX_WATCHPOINTS) {
@@ -408,7 +435,7 @@ debugger_add_watchpoint(uint32_t address, uint32_t size, int on_read, int on_wri
 	wp->size = size;
 	wp->on_read = (uint8_t) (on_read != 0);
 	wp->on_write = (uint8_t) (on_write != 0);
-	wp->reserved0 = 0;
+	wp->log_only = (uint8_t) (log_only != 0);
 	wp->reserved1 = 0;
 	return 1;
 }
@@ -473,6 +500,12 @@ debugger_memory_access(uint32_t address, uint32_t size, int is_write, uint32_t v
 	for (uint32_t i = 0; i < debugger_watchpoint_count; i++) {
 		const DebugWatchpointInfo *wp = &debugger_watchpoints[i];
 		if (debugger_watchpoint_matches(wp, address, size, is_write)) {
+			if (wp->log_only) {
+				/* Record the access and keep running. */
+				debugger_trace_push(TraceEvent_Watchpoint, arm.reg[15], 0,
+				    address, value, (size << 1) | (is_write ? 1u : 0u));
+				continue;
+			}
 			debugger_hit_address = address;
 			debugger_hit_value = value;
 			debugger_hit_size = (uint8_t) ((size > 255u) ? 255u : size);
@@ -500,6 +533,154 @@ debugger_after_instruction(uint32_t pc, uint32_t opcode)
 		}
 	}
 	debugger_step_active = (debugger_step_remaining > 0) ? 1 : 0;
+}
+
+/**
+ * Push one event into the debug trace ring. Called only on the emulator thread.
+ * On overflow the oldest unread event is discarded and a drop is recorded.
+ */
+static void
+debugger_trace_push(uint32_t type, uint32_t pc, uint32_t opcode,
+	uint32_t arg0, uint32_t arg1, uint32_t arg2)
+{
+	uint32_t next = (debugger_trace_head + 1) & DEBUGGER_TRACE_RING_MASK;
+	DebugTraceEvent *ev;
+
+	if (next == debugger_trace_tail) {
+		/* Ring full: drop the oldest entry to make room. */
+		debugger_trace_tail = (debugger_trace_tail + 1) & DEBUGGER_TRACE_RING_MASK;
+		debugger_trace_dropped++;
+	}
+
+	ev = &debugger_trace_ring[debugger_trace_head];
+	ev->seq = ++debugger_trace_seq;
+	ev->type = type;
+	ev->pc = pc;
+	ev->opcode = opcode;
+	ev->arg0 = arg0;
+	ev->arg1 = arg1;
+	ev->arg2 = arg2;
+
+	debugger_trace_head = next;
+}
+
+void
+debugger_set_trace_config(const DebugTraceConfig *cfg)
+{
+	if (cfg == NULL) {
+		return;
+	}
+	debugger_trace_config = *cfg;
+	debugger_swi_trace_active = (cfg->swi_trace_enabled || cfg->swi_trace_halt) ? 1 : 0;
+}
+
+void
+debugger_get_trace_config(DebugTraceConfig *cfg)
+{
+	if (cfg == NULL) {
+		return;
+	}
+	*cfg = debugger_trace_config;
+}
+
+uint32_t
+debugger_trace_pending(void)
+{
+	return (debugger_trace_head - debugger_trace_tail) & DEBUGGER_TRACE_RING_MASK;
+}
+
+/**
+ * Copy up to max pending trace events out of the ring (oldest first) and
+ * report-and-clear the dropped-event counter. Returns the number copied.
+ */
+uint32_t
+debugger_drain_trace_events(DebugTraceEvent *out, uint32_t max, uint32_t *dropped)
+{
+	uint32_t count = 0;
+
+	if (dropped != NULL) {
+		*dropped = debugger_trace_dropped;
+	}
+	debugger_trace_dropped = 0;
+
+	if (out == NULL) {
+		return 0;
+	}
+
+	while (count < max && debugger_trace_tail != debugger_trace_head) {
+		out[count++] = debugger_trace_ring[debugger_trace_tail];
+		debugger_trace_tail = (debugger_trace_tail + 1) & DEBUGGER_TRACE_RING_MASK;
+	}
+
+	return count;
+}
+
+/**
+ * Called from the top of exception() in both the interpreter and dynarec, before
+ * any CPU state is changed. Classifies the exception, optionally logs it, and
+ * optionally requests a halt at the exception vector handler.
+ *
+ * @param mmode   Target processor mode (unused; kept for call-site clarity)
+ * @param address Vector value passed to exception() (identifies the exception)
+ * @param pc      Current value of R15
+ */
+void
+debugger_exception_hook(uint32_t mmode, uint32_t address, uint32_t pc)
+{
+	uint32_t kind;
+	int trap;
+
+	NOT_USED(mmode);
+
+	switch (address) {
+	case 0x08: kind = TraceException_Undefined;     trap = debugger_trace_config.trap_undefined;       break;
+	case 0x10: kind = TraceException_PrefetchAbort;  trap = debugger_trace_config.trap_prefetch_abort;   break;
+	case 0x14: kind = TraceException_DataAbort;      trap = debugger_trace_config.trap_data_abort;       break;
+	default:   return; /* SWI (0x0c), IRQ, FIQ: not exception traps */
+	}
+
+	/* Always record when trapping so the faulting PC is visible even if
+	   exception logging is otherwise off. */
+	if (debugger_trace_config.log_exceptions || trap) {
+		debugger_trace_push(TraceEvent_Exception, pc, 0, kind, pc, 0);
+	}
+
+	/* Deferred halt: let exception() finish setting up the vector, then the
+	   core stops at the handler's first instruction via the instruction hook. */
+	if (trap && !debugger_paused && !debugger_pause_requested) {
+		debugger_pause_requested = 1;
+		debugger_pending_reason = DebugPauseReason_Exception;
+	}
+}
+
+/**
+ * Called from opSWI() once the SWI number is known, gated by
+ * debugger_swi_trace_active. Logs the SWI and optionally requests a halt.
+ *
+ * @return 1 if the SWI handling should stop (halt requested), 0 otherwise
+ */
+int
+debugger_swi_hook(uint32_t swinum, uint32_t opcode)
+{
+	if (swinum < debugger_trace_config.swi_filter_min ||
+	    swinum > debugger_trace_config.swi_filter_max) {
+		return 0;
+	}
+
+	if (debugger_trace_config.swi_trace_enabled) {
+		debugger_trace_push(TraceEvent_Swi, arm.reg[15], opcode,
+		    swinum, arm.reg[0], arm.reg[cpsr]);
+	}
+
+	/* Deferred halt: let opSWI() run the SWI (raising the supervisor
+	   exception), then stop at the SWI handler's first instruction. */
+	if (debugger_trace_config.swi_trace_halt && !debugger_paused &&
+	    !debugger_pause_requested) {
+		debugger_pause_requested = 1;
+		debugger_pending_reason = DebugPauseReason_Swi;
+	}
+
+	return 0;
 }
 
 /**

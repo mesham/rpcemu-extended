@@ -11,6 +11,8 @@ extern "C" {
 #include "arm.h"
 }
 
+#include "arm_disasm.h"
+
 namespace {
 
 wxString FormatHex(uint32_t value, int width = 8)
@@ -83,6 +85,8 @@ wxBEGIN_EVENT_TABLE(MachineInspectorWindow, wxFrame)
 	EVT_BUTTON(ID_BREAKPOINT_REMOVE, MachineInspectorWindow::OnRemoveBreakpoint)
 	EVT_BUTTON(ID_WATCHPOINT_ADD, MachineInspectorWindow::OnAddWatchpoint)
 	EVT_BUTTON(ID_WATCHPOINT_REMOVE, MachineInspectorWindow::OnRemoveWatchpoint)
+	EVT_CHECKBOX(ID_TRACE_CONFIG, MachineInspectorWindow::OnTraceConfigChanged)
+	EVT_BUTTON(ID_TRACE_CLEAR, MachineInspectorWindow::OnTraceClear)
 wxEND_EVENT_TABLE()
 
 MachineInspectorWindow::MachineInspectorWindow(wxWindow *parent, EmulatorHost &emulator)
@@ -131,7 +135,7 @@ void MachineInspectorWindow::BuildUi()
 
 	auto *disasm_panel = new wxPanel(notebook);
 	disasm_address_input_ = new wxTextCtrl(disasm_panel, wxID_ANY, wxEmptyString,
-	                                       wxDefaultPosition, wxSize(150, -1));
+	                                       wxDefaultPosition, wxSize(150, -1), wxTE_PROCESS_ENTER);
 	disasm_address_input_->SetHint("Address (hex)");
 	auto *disasm_go_button = new wxButton(disasm_panel, ID_DISASM_GO, "Go");
 	disasm_follow_pc_checkbox_ = new wxCheckBox(disasm_panel, ID_DISASM_FOLLOW_PC, "Follow PC");
@@ -156,7 +160,7 @@ void MachineInspectorWindow::BuildUi()
 
 	auto *memory_panel = new wxPanel(notebook);
 	memory_address_input_ = new wxTextCtrl(memory_panel, wxID_ANY, wxEmptyString,
-	                                       wxDefaultPosition, wxSize(150, -1));
+	                                       wxDefaultPosition, wxSize(150, -1), wxTE_PROCESS_ENTER);
 	memory_address_input_->SetHint("Address (hex)");
 	memory_bytes_spin_ = new wxSpinCtrl(memory_panel, wxID_ANY, wxEmptyString,
 	                                    wxDefaultPosition, wxSize(80, -1),
@@ -229,6 +233,8 @@ void MachineInspectorWindow::BuildUi()
 	watchpoint_size_choice_->SetSelection(2);
 	watchpoint_read_checkbox_ = new wxCheckBox(debug_panel, wxID_ANY, "Read");
 	watchpoint_write_checkbox_ = new wxCheckBox(debug_panel, wxID_ANY, "Write");
+	watchpoint_log_only_checkbox_ = new wxCheckBox(debug_panel, wxID_ANY, "Log only");
+	watchpoint_log_only_checkbox_->SetToolTip("Record matching accesses to the Trace tab instead of halting");
 	watchpoint_read_checkbox_->SetValue(true);
 	watchpoint_write_checkbox_->SetValue(true);
 	auto *watchpoint_add_button = new wxButton(debug_panel, ID_WATCHPOINT_ADD, "Add");
@@ -240,6 +246,7 @@ void MachineInspectorWindow::BuildUi()
 	watchpoint_controls->Add(watchpoint_size_choice_, 0, wxRIGHT, 6);
 	watchpoint_controls->Add(watchpoint_read_checkbox_, 0, wxRIGHT, 6);
 	watchpoint_controls->Add(watchpoint_write_checkbox_, 0, wxRIGHT, 6);
+	watchpoint_controls->Add(watchpoint_log_only_checkbox_, 0, wxRIGHT, 6);
 	watchpoint_controls->Add(watchpoint_add_button, 0, wxRIGHT, 6);
 	watchpoint_controls->Add(watchpoint_remove_button_, 0);
 	watchpoint_box->Add(watchpoint_list_, 1, wxEXPAND | wxBOTTOM, 6);
@@ -253,6 +260,58 @@ void MachineInspectorWindow::BuildUi()
 	debug_sizer->Add(watchpoint_box, 1, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
 	debug_panel->SetSizer(debug_sizer);
 	notebook->AddPage(debug_panel, "Debugger");
+
+	auto *trace_panel = new wxPanel(notebook);
+
+	auto *exception_box = new wxStaticBoxSizer(wxHORIZONTAL, trace_panel, "Halt on exception");
+	trap_undefined_checkbox_ = new wxCheckBox(trace_panel, ID_TRACE_CONFIG, "Undefined instruction");
+	trap_prefetch_checkbox_ = new wxCheckBox(trace_panel, ID_TRACE_CONFIG, "Prefetch abort");
+	trap_data_abort_checkbox_ = new wxCheckBox(trace_panel, ID_TRACE_CONFIG, "Data abort");
+	log_exceptions_checkbox_ = new wxCheckBox(trace_panel, ID_TRACE_CONFIG, "Log all exceptions");
+	exception_box->Add(trap_undefined_checkbox_, 0, wxALL, 4);
+	exception_box->Add(trap_prefetch_checkbox_, 0, wxALL, 4);
+	exception_box->Add(trap_data_abort_checkbox_, 0, wxALL, 4);
+	exception_box->Add(log_exceptions_checkbox_, 0, wxALL, 4);
+
+	auto *swi_box = new wxStaticBoxSizer(wxHORIZONTAL, trace_panel, "SWI tracing");
+	swi_trace_checkbox_ = new wxCheckBox(trace_panel, ID_TRACE_CONFIG, "Log SWIs");
+	swi_halt_checkbox_ = new wxCheckBox(trace_panel, ID_TRACE_CONFIG, "Halt on SWI");
+	swi_filter_min_input_ = new wxTextCtrl(trace_panel, wxID_ANY, wxEmptyString,
+	                                       wxDefaultPosition, wxSize(90, -1), wxTE_PROCESS_ENTER);
+	swi_filter_min_input_->SetHint("min (hex)");
+	swi_filter_max_input_ = new wxTextCtrl(trace_panel, wxID_ANY, wxEmptyString,
+	                                       wxDefaultPosition, wxSize(90, -1), wxTE_PROCESS_ENTER);
+	swi_filter_max_input_->SetHint("max (hex)");
+	swi_box->Add(swi_trace_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+	swi_box->Add(swi_halt_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxALL, 4);
+	swi_box->Add(new wxStaticText(trace_panel, wxID_ANY, "Filter:"), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 8);
+	swi_box->Add(swi_filter_min_input_, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 4);
+	swi_box->Add(new wxStaticText(trace_panel, wxID_ANY, ".."), 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
+	swi_box->Add(swi_filter_max_input_, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, 2);
+
+	trace_view_ = new wxTextCtrl(trace_panel, wxID_ANY, wxEmptyString,
+	                             wxDefaultPosition, wxDefaultSize,
+	                             wxTE_MULTILINE | wxTE_READONLY | wxTE_DONTWRAP);
+	ApplyMonoFont(trace_view_);
+
+	trace_autoscroll_checkbox_ = new wxCheckBox(trace_panel, wxID_ANY, "Auto-scroll");
+	trace_autoscroll_checkbox_->SetValue(true);
+	trace_dropped_label_ = new wxStaticText(trace_panel, wxID_ANY, "Dropped: 0");
+	auto *trace_clear_button = new wxButton(trace_panel, ID_TRACE_CLEAR, "Clear");
+
+	auto *trace_footer = new wxBoxSizer(wxHORIZONTAL);
+	trace_footer->Add(trace_autoscroll_checkbox_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+	trace_footer->Add(trace_dropped_label_, 0, wxALIGN_CENTER_VERTICAL | wxRIGHT, 8);
+	trace_footer->AddStretchSpacer();
+	trace_footer->Add(trace_clear_button, 0);
+
+	auto *trace_sizer = new wxBoxSizer(wxVERTICAL);
+	trace_sizer->Add(exception_box, 0, wxEXPAND | wxALL, 8);
+	trace_sizer->Add(swi_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 8);
+	trace_sizer->Add(trace_view_, 1, wxEXPAND | wxLEFT | wxRIGHT, 8);
+	trace_sizer->Add(trace_footer, 0, wxEXPAND | wxALL, 8);
+	trace_panel->SetSizer(trace_sizer);
+	notebook->AddPage(trace_panel, "Trace");
 
 	peripheral_view_ = new wxTextCtrl(notebook, wxID_ANY, wxEmptyString,
 	                                  wxDefaultPosition, wxDefaultSize,
@@ -269,6 +328,8 @@ void MachineInspectorWindow::BuildUi()
 	memory_address_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnMemoryGo, this);
 	breakpoint_list_->Bind(wxEVT_LISTBOX, &MachineInspectorWindow::OnBreakpointSelection, this);
 	watchpoint_list_->Bind(wxEVT_LISTBOX, &MachineInspectorWindow::OnWatchpointSelection, this);
+	swi_filter_min_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnTraceConfigChanged, this);
+	swi_filter_max_input_->Bind(wxEVT_TEXT_ENTER, &MachineInspectorWindow::OnTraceConfigChanged, this);
 }
 
 void MachineInspectorWindow::ApplyMonoFont(wxWindow *window)
@@ -282,6 +343,7 @@ void MachineInspectorWindow::OnTimer(wxTimerEvent &)
 	if (auto_refresh_checkbox_->GetValue()) {
 		RefreshSnapshot();
 	}
+	DrainTraceEvents();
 }
 
 void MachineInspectorWindow::OnRefreshNow(wxCommandEvent &)
@@ -491,10 +553,11 @@ void MachineInspectorWindow::PopulateWatchpointList(const MachineSnapshot &snaps
 			flags = "N/A";
 		}
 
-		const wxString label = wxString::Format("%s | %u bytes | %s",
+		const wxString label = wxString::Format("%s | %u bytes | %s%s",
 		                                        FormatHex(wp.address),
 		                                        wp.size,
-		                                        flags);
+		                                        flags,
+		                                        wp.log_only ? " | log" : "");
 		watchpoint_list_->Append(label, reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
 	}
 
@@ -512,6 +575,8 @@ void MachineInspectorWindow::UpdateDebuggerUi(const MachineSnapshot &snapshot)
 	case DebugPauseReason_Breakpoint: reason = "breakpoint"; break;
 	case DebugPauseReason_Watchpoint: reason = "watchpoint"; break;
 	case DebugPauseReason_Step: reason = "single step"; break;
+	case DebugPauseReason_Exception: reason = "exception trap"; break;
+	case DebugPauseReason_Swi: reason = "SWI trap"; break;
 	default: reason = "unknown"; break;
 	}
 
@@ -545,6 +610,122 @@ void MachineInspectorWindow::UpdateDebuggerUi(const MachineSnapshot &snapshot)
 	run_button_->Enable(paused);
 	pause_button_->Enable(!paused);
 	step_button_->Enable(paused);
+}
+
+void MachineInspectorWindow::OnTraceConfigChanged(wxCommandEvent &)
+{
+	ApplyTraceConfig();
+}
+
+void MachineInspectorWindow::OnTraceClear(wxCommandEvent &)
+{
+	trace_view_->Clear();
+	trace_dropped_total_ = 0;
+	trace_dropped_label_->SetLabel("Dropped: 0");
+}
+
+void MachineInspectorWindow::ApplyTraceConfig()
+{
+	DebugTraceConfig cfg{};
+	cfg.trap_undefined = trap_undefined_checkbox_->GetValue() ? 1 : 0;
+	cfg.trap_prefetch_abort = trap_prefetch_checkbox_->GetValue() ? 1 : 0;
+	cfg.trap_data_abort = trap_data_abort_checkbox_->GetValue() ? 1 : 0;
+	cfg.log_exceptions = log_exceptions_checkbox_->GetValue() ? 1 : 0;
+	cfg.swi_trace_enabled = swi_trace_checkbox_->GetValue() ? 1 : 0;
+	cfg.swi_trace_halt = swi_halt_checkbox_->GetValue() ? 1 : 0;
+
+	bool ok = false;
+	const uint32_t min = ParseAddress(swi_filter_min_input_->GetValue(), &ok);
+	cfg.swi_filter_min = ok ? min : 0;
+	ok = false;
+	const uint32_t max = ParseAddress(swi_filter_max_input_->GetValue(), &ok);
+	cfg.swi_filter_max = ok ? max : 0xffffffffu;
+
+	emulator_.SetDebugTraceConfig(cfg);
+}
+
+void MachineInspectorWindow::DrainTraceEvents()
+{
+	/* Only poll the ring when something can be feeding it. */
+	bool active = trap_undefined_checkbox_->GetValue() ||
+	              trap_prefetch_checkbox_->GetValue() ||
+	              trap_data_abort_checkbox_->GetValue() ||
+	              log_exceptions_checkbox_->GetValue() ||
+	              swi_trace_checkbox_->GetValue();
+	if (!active) {
+		for (uint32_t i = 0; i < last_snapshot_.debug_watchpoint_count; i++) {
+			if (last_snapshot_.debug_watchpoints[i].log_only) {
+				active = true;
+				break;
+			}
+		}
+	}
+	if (!active) {
+		return;
+	}
+
+	uint32_t dropped = 0;
+	const std::vector<DebugTraceEvent> events = emulator_.DrainTraceEvents(2048, &dropped);
+
+	if (dropped > 0) {
+		trace_dropped_total_ += dropped;
+		trace_dropped_label_->SetLabel(wxString::Format("Dropped: %u", trace_dropped_total_));
+	}
+
+	if (events.empty()) {
+		return;
+	}
+
+	/* Cap the control's size so a long trace session does not grow unbounded. */
+	if (trace_view_->GetLastPosition() > 256 * 1024) {
+		trace_view_->Remove(0, trace_view_->GetLastPosition() / 2);
+	}
+
+	wxString chunk;
+	char disasm_buf[128];
+	for (const DebugTraceEvent &ev : events) {
+		wxString line;
+		switch (ev.type) {
+		case TraceEvent_Swi: {
+			arm_disasm(ev.opcode, ev.pc, disasm_buf, sizeof(disasm_buf));
+			line = wxString::Format("%08u  PC=%s  SWI &%06X  %s  R0=%s",
+			                        ev.seq, FormatHex(ev.pc), ev.arg0,
+			                        wxString::FromUTF8(disasm_buf), FormatHex(ev.arg1));
+			break;
+		}
+		case TraceEvent_Exception: {
+			const char *kind = "exception";
+			switch (ev.arg0) {
+			case TraceException_Undefined: kind = "undefined instruction"; break;
+			case TraceException_PrefetchAbort: kind = "prefetch abort"; break;
+			case TraceException_DataAbort: kind = "data abort"; break;
+			default: break;
+			}
+			line = wxString::Format("%08u  PC=%s  EXCEPTION  %s",
+			                        ev.seq, FormatHex(ev.pc), kind);
+			break;
+		}
+		case TraceEvent_Watchpoint: {
+			const bool is_write = (ev.arg2 & 1u) != 0;
+			const uint32_t size = ev.arg2 >> 1;
+			line = wxString::Format("%08u  PC=%s  WATCH  %s %s  addr=%s  value=%s",
+			                        ev.seq, FormatHex(ev.pc),
+			                        is_write ? "write" : "read",
+			                        wxString::Format("%ub", size),
+			                        FormatHex(ev.arg0), FormatHex(ev.arg1));
+			break;
+		}
+		default:
+			line = wxString::Format("%08u  PC=%s  (unknown event)", ev.seq, FormatHex(ev.pc));
+			break;
+		}
+		chunk += line + "\n";
+	}
+
+	trace_view_->AppendText(chunk);
+	if (trace_autoscroll_checkbox_->GetValue()) {
+		trace_view_->ShowPosition(trace_view_->GetLastPosition());
+	}
 }
 
 void MachineInspectorWindow::RefreshDisassembly(uint32_t address)
@@ -716,7 +897,9 @@ void MachineInspectorWindow::OnAddWatchpoint(wxCommandEvent &)
 		return;
 	}
 
-	emulator_.DebuggerAddWatchpoint(address, size, on_read, on_write);
+	const bool log_only = watchpoint_log_only_checkbox_ != nullptr &&
+	                      watchpoint_log_only_checkbox_->GetValue();
+	emulator_.DebuggerAddWatchpoint(address, size, on_read, on_write, log_only);
 	watchpoint_address_input_->Clear();
 	RefreshSnapshot();
 }

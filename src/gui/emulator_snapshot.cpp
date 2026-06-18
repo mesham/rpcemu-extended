@@ -141,6 +141,10 @@ emulator_fill_snapshot(MachineSnapshot *snapshot)
 		       wp_count * sizeof(DebugWatchpointInfo));
 	}
 
+	debugger_get_trace_config(&snapshot->debug_trace_config);
+	snapshot->debug_trace_pending = debugger_trace_pending();
+	snapshot->debug_trace_dropped = 0;
+
 	vidc_get_snapshot(&snapshot->vidc);
 	int double_x = 0;
 	int double_y = 0;

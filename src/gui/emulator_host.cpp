@@ -678,7 +678,8 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 	case EmuCommandType::DebuggerAddWatchpoint:
 		if (debugger_add_watchpoint(command.debug_address, command.debug_size,
 		                            command.debug_on_read ? 1 : 0,
-		                            command.debug_on_write ? 1 : 0)) {
+		                            command.debug_on_write ? 1 : 0,
+		                            command.debug_log_only ? 1 : 0)) {
 			NotifyDebuggerStateChanged();
 		}
 		break;
@@ -722,6 +723,24 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 			disasm_ready_ = true;
 		}
 		disasm_cv_.notify_one();
+		break;
+	}
+	case EmuCommandType::SetDebugTraceConfig:
+		debugger_set_trace_config(&command.debug_trace_config);
+		break;
+	case EmuCommandType::DrainTraceEvents: {
+		uint32_t max = command.debug_count ? command.debug_count : 256;
+		std::vector<DebugTraceEvent> events(max);
+		uint32_t dropped = 0;
+		uint32_t n = debugger_drain_trace_events(events.data(), max, &dropped);
+		events.resize(n);
+		{
+			std::lock_guard<std::mutex> lock(trace_mutex_);
+			trace_result_ = std::move(events);
+			trace_dropped_ = dropped;
+			trace_ready_ = true;
+		}
+		trace_cv_.notify_one();
 		break;
 	}
 	}
@@ -883,7 +902,7 @@ void EmulatorHost::DebuggerClearBreakpoints()
 	PostCommand(MakeCommand(EmuCommandType::DebuggerClearBreakpoints));
 }
 
-void EmulatorHost::DebuggerAddWatchpoint(uint32_t address, uint32_t size, bool on_read, bool on_write)
+void EmulatorHost::DebuggerAddWatchpoint(uint32_t address, uint32_t size, bool on_read, bool on_write, bool log_only)
 {
 	EmuCommand cmd;
 	cmd.type = EmuCommandType::DebuggerAddWatchpoint;
@@ -891,6 +910,7 @@ void EmulatorHost::DebuggerAddWatchpoint(uint32_t address, uint32_t size, bool o
 	cmd.debug_size = size;
 	cmd.debug_on_read = on_read;
 	cmd.debug_on_write = on_write;
+	cmd.debug_log_only = log_only;
 	PostCommand(cmd);
 }
 
@@ -908,6 +928,36 @@ void EmulatorHost::DebuggerRemoveWatchpoint(uint32_t address, uint32_t size, boo
 void EmulatorHost::DebuggerClearWatchpoints()
 {
 	PostCommand(MakeCommand(EmuCommandType::DebuggerClearWatchpoints));
+}
+
+void EmulatorHost::SetDebugTraceConfig(const DebugTraceConfig &cfg)
+{
+	EmuCommand cmd;
+	cmd.type = EmuCommandType::SetDebugTraceConfig;
+	cmd.debug_trace_config = cfg;
+	PostCommand(cmd);
+}
+
+std::vector<DebugTraceEvent> EmulatorHost::DrainTraceEvents(uint32_t max, uint32_t *dropped_out)
+{
+	if (max == 0) {
+		max = 256;
+	}
+
+	std::unique_lock<std::mutex> lock(trace_mutex_);
+	trace_ready_ = false;
+
+	EmuCommand cmd;
+	cmd.type = EmuCommandType::DrainTraceEvents;
+	cmd.debug_count = max;
+	PostCommand(cmd);
+
+	trace_cv_.wait(lock, [this]() { return trace_ready_; });
+
+	if (dropped_out != nullptr) {
+		*dropped_out = trace_dropped_;
+	}
+	return std::move(trace_result_);
 }
 
 MachineSnapshot EmulatorHost::TakeSnapshot()

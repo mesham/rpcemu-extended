@@ -82,7 +82,9 @@ typedef enum {
 	DebugPauseReason_User = 1,
 	DebugPauseReason_Breakpoint = 2,
 	DebugPauseReason_Watchpoint = 3,
-	DebugPauseReason_Step = 4
+	DebugPauseReason_Step = 4,
+	DebugPauseReason_Exception = 5,
+	DebugPauseReason_Swi = 6
 } DebugPauseReason;
 
 typedef struct {
@@ -90,9 +92,48 @@ typedef struct {
 	uint32_t size;
 	uint8_t on_read;
 	uint8_t on_write;
-	uint8_t reserved0;
+	uint8_t log_only;	/**< Emit a trace event instead of halting */
 	uint8_t reserved1;
 } DebugWatchpointInfo;
+
+/** Categories of event captured by the debug trace ring */
+typedef enum {
+	TraceEvent_Exception = 0,
+	TraceEvent_Swi = 1,
+	TraceEvent_Watchpoint = 2
+} TraceEventType;
+
+/** Kind values carried in DebugTraceEvent.arg0 for TraceEvent_Exception */
+typedef enum {
+	TraceException_Undefined = 0,
+	TraceException_PrefetchAbort = 1,
+	TraceException_DataAbort = 2
+} TraceExceptionKind;
+
+/** A single entry in the debug trace ring. Pure POD, copied between threads. */
+typedef struct DebugTraceEvent {
+	uint32_t seq;		/**< Monotonic sequence number; gaps imply drops */
+	uint32_t type;		/**< TraceEventType */
+	uint32_t pc;		/**< Faulting / calling PC */
+	uint32_t opcode;	/**< Instruction word (0 if not available) */
+	uint32_t arg0;		/**< exc: TraceExceptionKind | swi: number | wp: address */
+	uint32_t arg1;		/**< exc: abort address | swi: R0 | wp: value */
+	uint32_t arg2;		/**< swi: cpsr flags | wp: (size << 1) | is_write */
+} DebugTraceEvent;
+
+/** Runtime configuration of debug tracing/trapping, set from the GUI */
+typedef struct DebugTraceConfig {
+	uint8_t trap_undefined;		/**< Halt on undefined instruction */
+	uint8_t trap_prefetch_abort;	/**< Halt on prefetch abort */
+	uint8_t trap_data_abort;	/**< Halt on data abort */
+	uint8_t log_exceptions;		/**< Also emit exception events to the ring */
+	uint8_t swi_trace_enabled;	/**< Emit SWI events to the ring */
+	uint8_t swi_trace_halt;		/**< Halt on a matching SWI */
+	uint8_t reserved0;
+	uint8_t reserved1;
+	uint32_t swi_filter_min;	/**< Inclusive SWI-number range (0..0xffffffff = all) */
+	uint32_t swi_filter_max;
+} DebugTraceConfig;
 
 typedef struct {
 	int paused;
@@ -283,11 +324,20 @@ extern int debugger_add_breakpoint(uint32_t address);
 extern int debugger_remove_breakpoint(uint32_t address);
 extern int debugger_has_breakpoint(uint32_t address);
 extern void debugger_clear_watchpoints(void);
-extern int debugger_add_watchpoint(uint32_t address, uint32_t size, int on_read, int on_write);
+extern int debugger_add_watchpoint(uint32_t address, uint32_t size, int on_read, int on_write, int log_only);
 extern int debugger_remove_watchpoint(uint32_t address, uint32_t size, int on_read, int on_write);
 extern int debugger_instruction_hook(uint32_t pc, uint32_t opcode);
 extern void debugger_memory_access(uint32_t address, uint32_t size, int is_write, uint32_t value);
 extern void debugger_after_instruction(uint32_t pc, uint32_t opcode);
+
+/* Debug tracing: exception trapping, SWI tracing, logging watchpoints */
+extern int debugger_swi_trace_active;	/**< Fast gate read from opSWI() */
+extern void debugger_set_trace_config(const DebugTraceConfig *cfg);
+extern void debugger_get_trace_config(DebugTraceConfig *cfg);
+extern uint32_t debugger_trace_pending(void);
+extern uint32_t debugger_drain_trace_events(DebugTraceEvent *out, uint32_t max, uint32_t *dropped);
+extern void debugger_exception_hook(uint32_t mmode, uint32_t address, uint32_t pc);
+extern int debugger_swi_hook(uint32_t swinum, uint32_t opcode);
 
 /* host GUI bridge */
 extern void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl, int yh, int double_size, int host_xsize, int host_ysize);
