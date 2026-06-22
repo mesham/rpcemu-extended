@@ -110,7 +110,8 @@ static void SeedDirIfMissing(const wxString &src, const wxString &dst)
 	}
 	wxDir::Make(dst, wxS_DIR_DEFAULT, wxPATH_MKDIR_FULL);
 
-	wxFileName src_root(src);
+	wxFileName src_root;
+	src_root.AssignDir(src); /* treat src as a directory, not a file */
 	src_root.Normalize(wxPATH_NORM_ALL);
 	const wxString src_prefix = src_root.GetPathWithSep();
 

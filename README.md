@@ -84,8 +84,9 @@ everything self-contained in its own folder.
 
 ### Supported systems
 
-The prebuilt release is a **64-bit x86 (amd64)** Linux binary, built on **Ubuntu
-24.04 LTS**. Because it is dynamically linked, it runs on distributions whose system
+The prebuilt releases are **amd64** (x86, dynarec) and **arm64** (e.g. Raspberry Pi —
+interpreter build, as there is no ARM dynarec yet) Linux packages, built on **Ubuntu
+24.04 LTS**. Because they are dynamically linked, they run on distributions whose system
 libraries are that version or newer. In practice that means:
 
 | Distribution | Runs the prebuilt release? |
@@ -93,8 +94,8 @@ libraries are that version or newer. In practice that means:
 | Ubuntu 24.04 LTS (Noble) and newer (24.10, 25.04, …) | ✅ Yes — primary target |
 | Linux Mint 22 / 22.x, Pop!_OS 24.04, Zorin 18, elementary 8, KDE neon (24.04 base) | ✅ Yes |
 | Debian 13 (Trixie) and newer | ✅ Yes |
+| arm64 / Raspberry Pi (Ubuntu 24.04+ base) | ✅ Yes — `arm64` package (interpreter; slower than x86) |
 | Ubuntu 22.04 LTS, Debian 12 (Bookworm) and older | ❌ No — system libraries too old |
-| Non-x86 (arm64 / Raspberry Pi, etc.) | ❌ Not in the prebuilt download — build from source |
 
 Minimum requirements: **glibc ≥ 2.34**, **libstdc++ from GCC 13.2+** (`GLIBCXX_3.4.32`),
 and **wxWidgets 3.2**. These ship as standard on Ubuntu 24.04-era distributions.
@@ -103,8 +104,24 @@ On an older or different distribution (or for arm64), **build from source** inst
 `./setup-build-env.sh` then `./build.sh` adapts to your system's libraries. See
 [COMPILE.md](COMPILE.md).
 
-The portable `.tar.gz` needs its runtime libraries installed once (`./setup-runtime-env.sh`);
-the `.deb` installs them automatically. See [Run](#run) below.
+### Install the `.deb`
+
+Install with **apt** — not `dpkg -i`, which reports missing dependencies but won't fetch
+them. The runtime libraries (wxWidgets, SDL2, libvncserver, …) live in Ubuntu's
+**`universe`** component, so make sure it's enabled first:
+
+```bash
+sudo add-apt-repository universe     # if not already enabled
+sudo apt update
+sudo apt install ./rpcemu_*_amd64.deb   # or _arm64.deb on a Pi
+```
+
+`apt` reads the package's declared dependencies and pulls them in. If `apt` complains the
+packages are *"not installable"*, it's almost always because `universe` isn't enabled or
+the package lists are stale — the two commands above fix that.
+
+The portable `.tar.gz` instead bundles everything in one folder; run
+`./setup-runtime-env.sh` once to install its runtime libraries. See [Run](#run) below.
 
 ### Build
 

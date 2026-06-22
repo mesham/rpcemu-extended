@@ -134,7 +134,8 @@ bool ConfigPathsCopyDirectory(const wxString &src, const wxString &dst)
 		return false;
 	}
 
-	wxFileName src_root(src);
+	wxFileName src_root;
+	src_root.AssignDir(src); /* treat src as a directory, not a file */
 	src_root.Normalize(wxPATH_NORM_ALL);
 	const wxString src_prefix = src_root.GetPathWithSep();
 
