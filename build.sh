@@ -184,6 +184,7 @@ stage_linux_release() {
 	cp -a netroms "$LINUX_RELEASE/"
 	cp -a resources "$LINUX_RELEASE/"
 	cp -a roms "$LINUX_RELEASE/"
+	cp -a podules "$LINUX_RELEASE/"
 	cp -a default "$LINUX_RELEASE/"
 	rm -rf "$LINUX_RELEASE/machines/Default"
 	mkdir -p "$LINUX_RELEASE/machines/Default"

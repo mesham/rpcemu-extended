@@ -38,6 +38,9 @@ install(DIRECTORY resources/ DESTINATION share/rpcemu/resources)
 install(DIRECTORY poduleroms/ DESTINATION share/rpcemu/poduleroms)
 install(DIRECTORY netroms/ DESTINATION share/rpcemu/netroms)
 install(DIRECTORY roms/ DESTINATION share/rpcemu/roms)
+# Expansion-card (podule) ROMs are shipped system components, read from the
+# shared resource dir; users select which podules to use per machine config.
+install(DIRECTORY podules/ DESTINATION share/rpcemu/podules)
 # Factory seed used to populate new machines (cmos.ram + hostfs).
 install(DIRECTORY default/ DESTINATION share/rpcemu/default)
 # Ship a ready-to-run Default machine. Use the tracked machines/Default if present

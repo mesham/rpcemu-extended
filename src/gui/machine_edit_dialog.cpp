@@ -1,6 +1,7 @@
 #include "machine_edit_dialog.h"
 
 #include "config_paths.h"
+#include "podule_config_dialog.h"
 
 #include <cstring>
 
@@ -12,6 +13,8 @@
 extern "C" {
 #include "romload.h"
 #include "rpcemu.h"
+#include "podules.h"
+#include "podule_config.h"
 }
 
 namespace {
@@ -209,9 +212,12 @@ void MachineEditDialog::BuildUi()
 	button_row->Add(ok_button, 0, wxRIGHT, 4);
 	button_row->Add(cancel_button, 0);
 
+	wxSizer *podule_box = BuildPoduleSection(this);
+
 	auto *main = new wxBoxSizer(wxVERTICAL);
 	main->Add(form, 0, wxEXPAND | wxALL, 10);
 	main->Add(hd_box, 0, wxEXPAND | wxLEFT | wxRIGHT, 10);
+	main->Add(podule_box, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, 10);
 	main->Add(button_row, 0, wxEXPAND | wxALL, 10);
 	SetSizer(main);
 
@@ -339,6 +345,247 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	compat_label_->SetForegroundColour(wxColour(27, 94, 32));
 }
 
+wxSizer *MachineEditDialog::BuildPoduleSection(wxWindow *parent)
+{
+	auto *box = new wxStaticBoxSizer(wxVERTICAL, parent, "Podules");
+	wxWindow *const p = box->GetStaticBox();
+
+	/* Snapshot the available podules once. */
+	const int count = podule_get_available_count();
+	for (int i = 0; i < count; i++) {
+		const char *sn = podule_get_available_short_name(i);
+		const char *nm = podule_get_available_name(i);
+		podule_available_.emplace_back(wxString::FromUTF8(sn ? sn : ""),
+		                               wxString::FromUTF8(nm ? nm : (sn ? sn : "?")));
+	}
+
+	/* Two slots per row: label, combo, configure-button (x2). */
+	auto *grid = new wxFlexGridSizer(0, 6, 6, 8);
+	grid->AddGrowableCol(1, 1);
+	grid->AddGrowableCol(4, 1);
+
+	for (int i = 0; i < PODULE_CONFIG_SLOTS; i++) {
+		grid->Add(new wxStaticText(p, wxID_ANY, wxString::Format("Slot %d:", i)),
+		          0, wxALIGN_CENTER_VERTICAL);
+
+		auto *choice = new wxChoice(p, wxID_ANY);
+		choice->Bind(wxEVT_CHOICE, &MachineEditDialog::OnPoduleChanged, this);
+		grid->Add(choice, 1, wxEXPAND);
+
+		auto *cfg_btn = new wxButton(p, wxID_ANY, wxString::FromUTF8("\xE2\x80\xA6"),
+		                             wxDefaultPosition, wxSize(32, -1));
+		cfg_btn->SetToolTip("Configure this podule");
+		cfg_btn->Bind(wxEVT_BUTTON, [this, i](wxCommandEvent &) { OnPoduleConfigure(i); });
+		grid->Add(cfg_btn, 0, wxALIGN_CENTER_VERTICAL);
+
+		podule_combos_.push_back(choice);
+		podule_config_btns_.push_back(cfg_btn);
+		podule_selection_.push_back("");
+		podule_item_names_.emplace_back();
+	}
+	box->Add(grid, 0, wxEXPAND | wxALL, 6);
+
+	auto *note = new wxStaticText(p, wxID_ANY,
+	    "Eight expansion-card slots. Slot 0 (Support) and the network card are "
+	    "built-in. A podule can only be assigned to one slot; changes take "
+	    "effect after reset.");
+	note->SetForegroundColour(kHdColourMuted);
+	note->SetFont(note->GetFont().Smaller());
+	box->Add(note, 0, wxEXPAND | wxLEFT | wxRIGHT | wxBOTTOM, 6);
+
+	RebuildPoduleChoices();
+	return box;
+}
+
+/* Rebuild every slot's dropdown for the 8-slot backplane view:
+    - slot 0 is the built-in RPCEmu Support ROM (locked),
+    - slot 1 is the network card when networking is enabled (locked),
+    - the rest are user-assignable, and a podule chosen in one slot is hidden
+      from the others (one slot per podule). */
+void MachineEditDialog::RebuildPoduleChoices()
+{
+	if (podule_combos_.empty()) {
+		return;
+	}
+
+	const bool network_on = network_combo_ != nullptr && network_combo_->GetSelection() > 0;
+
+	for (size_t i = 0; i < podule_combos_.size(); i++) {
+		wxChoice *combo = podule_combos_[i];
+		std::vector<wxString> &names = podule_item_names_[i];
+
+		combo->Clear();
+		names.clear();
+
+		/* Built-in (reserved) slots: shown locked, not user-assignable. */
+		wxString builtin;
+		if (i == 0) {
+			builtin = "RPCEmu Support (built-in)";
+		} else if (i == 1 && network_on) {
+			builtin = "RPCEmu Ethernet (built-in)";
+		}
+		if (!builtin.IsEmpty()) {
+			combo->Append(builtin);
+			names.push_back("");
+			combo->SetSelection(0);
+			combo->Disable();
+			if (i < podule_config_btns_.size()) {
+				podule_config_btns_[i]->Enable(false);
+			}
+			podule_selection_[i] = ""; /* never a user podule */
+			continue;
+		}
+
+		combo->Enable();
+		combo->Append("(None)");
+		names.push_back("");
+
+		for (const auto &pa : podule_available_) {
+			const wxString &short_name = pa.first;
+
+			bool used_elsewhere = false;
+			for (size_t j = 0; j < podule_selection_.size(); j++) {
+				if (j != i && podule_selection_[j] == short_name) {
+					used_elsewhere = true;
+					break;
+				}
+			}
+			if (used_elsewhere) {
+				continue;
+			}
+
+			combo->Append(pa.second);
+			names.push_back(short_name);
+		}
+
+		int sel = 0;
+		for (size_t k = 0; k < names.size(); k++) {
+			if (names[k] == podule_selection_[i]) {
+				sel = static_cast<int>(k);
+				break;
+			}
+		}
+		combo->SetSelection(sel);
+
+		/* The configure button is active only when the slot holds a podule
+		   that exposes a configuration schema. */
+		if (i < podule_config_btns_.size()) {
+			bool has_config = false;
+			if (!podule_selection_[i].IsEmpty()) {
+				const podule_header_t *h =
+				    podule_find(podule_selection_[i].utf8_str().data());
+				has_config = (h != nullptr && h->config != nullptr);
+			}
+			podule_config_btns_[i]->Enable(has_config);
+		}
+	}
+}
+
+void MachineEditDialog::OnPoduleConfigure(int slot)
+{
+	if (slot < 0 || slot >= static_cast<int>(podule_selection_.size())) {
+		return;
+	}
+	const wxString short_name = podule_selection_[slot];
+	if (short_name.IsEmpty()) {
+		return;
+	}
+
+	const podule_header_t *header = podule_find(short_name.utf8_str().data());
+	if (header == nullptr || header->config == nullptr) {
+		return;
+	}
+
+	const wxString section = wxString::Format("%s.%d", short_name, slot);
+	const wxString title = wxString::Format("Configure %s",
+	    wxString::FromUTF8(header->name ? header->name : header->short_name));
+
+	PoduleConfigDialog dlg(this, title, header->config, &podule_kv_[section]);
+	dlg.ShowModal();
+}
+
+void MachineEditDialog::OnPoduleChanged(wxCommandEvent &event)
+{
+	for (size_t i = 0; i < podule_combos_.size(); i++) {
+		if (podule_combos_[i] != event.GetEventObject()) {
+			continue;
+		}
+		const int sel = podule_combos_[i]->GetSelection();
+		if (sel >= 0 && sel < static_cast<int>(podule_item_names_[i].size())) {
+			podule_selection_[i] = podule_item_names_[i][sel];
+		} else {
+			podule_selection_[i] = "";
+		}
+		break;
+	}
+	RebuildPoduleChoices();
+}
+
+void MachineEditDialog::LoadPoduleSettings(wxFileConfig &settings)
+{
+	settings.SetPath("/Podules");
+	for (int i = 0; i < PODULE_CONFIG_SLOTS &&
+	     i < static_cast<int>(podule_selection_.size()); i++) {
+		wxString val;
+		if (settings.Read(wxString::Format("slot%d", i), &val) && !val.IsEmpty()) {
+			podule_selection_[i] = val;
+		} else {
+			podule_selection_[i] = "";
+		}
+	}
+
+	/* Per-podule key/value config: [PoduleConfig/<section>] key=value. Collect
+	   group names first - changing SetPath mid-enumeration breaks the iterator. */
+	podule_kv_.clear();
+	settings.SetPath("/PoduleConfig");
+	wxArrayString groups;
+	wxString group;
+	long gidx;
+	for (bool c = settings.GetFirstGroup(group, gidx); c; c = settings.GetNextGroup(group, gidx)) {
+		groups.Add(group);
+	}
+	for (size_t gi = 0; gi < groups.GetCount(); gi++) {
+		const wxString &section = groups[gi];
+		settings.SetPath("/PoduleConfig/" + section);
+		wxString entry;
+		long eidx;
+		for (bool e = settings.GetFirstEntry(entry, eidx); e; e = settings.GetNextEntry(entry, eidx)) {
+			wxString value;
+			settings.Read(entry, &value);
+			podule_kv_[section][entry] = value;
+		}
+		settings.SetPath("/PoduleConfig");
+	}
+
+	settings.SetPath("/General");
+	RebuildPoduleChoices();
+}
+
+void MachineEditDialog::SavePoduleSettings(wxFileConfig &settings)
+{
+	settings.SetPath("/Podules");
+	for (int i = 0; i < PODULE_CONFIG_SLOTS &&
+	     i < static_cast<int>(podule_selection_.size()); i++) {
+		settings.Write(wxString::Format("slot%d", i), podule_selection_[i]);
+		/* Keep the live store in step so the next reset installs the new
+		   selection (for the running machine; harmless otherwise). */
+		podule_cfg_set_slot(i, podule_selection_[i].utf8_str().data());
+	}
+
+	/* Persist per-podule key/value config and mirror it into the live store. */
+	for (const auto &section : podule_kv_) {
+		settings.SetPath("/PoduleConfig/" + section.first);
+		for (const auto &kv : section.second) {
+			settings.Write(kv.first, kv.second);
+			podule_cfg_set_string(section.first.utf8_str().data(),
+			                      kv.first.utf8_str().data(),
+			                      kv.second.utf8_str().data());
+		}
+	}
+
+	settings.SetPath("/General");
+}
+
 void MachineEditDialog::LoadSettings()
 {
 	loading_settings_ = true;
@@ -414,6 +661,8 @@ void MachineEditDialog::LoadSettings()
 	OnNetworkChanged(dummy);
 	loading_settings_ = false;
 
+	LoadPoduleSettings(settings);
+
 	CallAfter([this]() { UpdateRomModelCompatibility(); });
 
 	if (!allow_rename_) {
@@ -462,6 +711,8 @@ void MachineEditDialog::SaveSettings()
 	settings.Write("network_type", network_type);
 	settings.Write("bridgename", bridge_edit_->GetValue());
 	settings.Write("ipaddress", tunnel_edit_->GetValue());
+
+	SavePoduleSettings(settings);
 
 	if (!settings.Flush()) {
 		wxLogError("Failed to save machine configuration to %s", config_path_);
@@ -725,6 +976,10 @@ void MachineEditDialog::OnNetworkChanged(wxCommandEvent &)
 	const bool tunnel = (label == "IP Tunnelling");
 	tunnel_label_->Enable(tunnel);
 	tunnel_edit_->Enable(tunnel);
+
+	/* Enabling/disabling networking changes whether slot 1 is the (locked)
+	   network card or a free user slot. */
+	RebuildPoduleChoices();
 }
 
 void MachineEditDialog::OnRomOrModelChanged(wxCommandEvent &)

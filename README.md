@@ -16,6 +16,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
 - **Dual HostFS drives** — per-machine **HostFS** plus a common **Shared** drive (`shared/`) visible to all machines.
 - **Access/ShareFS networking** — NAT-mode relay for Acorn Access and ShareFS file sharing between emulated and real machines.
+- **Expansion cards (podules)** — assign emulated podules per machine (*Settings → Machine → Podules*): ROM, MIDI (AKA16/AKA12/MIDI Max, host MIDI via ALSA), and the Computer Concepts Lark sampler. Plugin ABI for adding more. See [docs/podules.md](docs/podules.md).
 - **Full FPA10 emulation** — floating-point coprocessor with cycle-accurate timing; works with interpreter and dynarec.
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client.
@@ -58,13 +59,24 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `shared/` | Common folder exposed as `HostFS::Shared.$` (created at startup if missing) |
 | `roms/` | RISC OS ROM images — see [official ROM instructions](http://www.marutan.net/rpcemu/manual/romimage.html) |
 | `resources/` | Blank floppy/disc templates for *Disc → Floppy → Create Blank* |
-| `poduleroms/` | Compiled podule ROM images |
+| `poduleroms/` | Compiled extension ROM images (HostFS, ScrollWheel — the built-in Support podule) |
+| `podules/` | Expansion-card (podule) ROMs — shipped system components, selectable per machine |
 | `riscos-progs/` | RISC OS module source (HostFS, HostFSFiler, ScrollWheel, EtherRPCEm) |
 | `packaging/` | Desktop entry and other packaging files |
 | `build.sh` | Unified build and release script |
 | `docs/dynarec.md` | ARM dynamic recompiler (build, behaviour, limitations) |
 | `docs/peripherals.md` | Serial and parallel ports (file logging, TCP modem, printer) |
+| `docs/podules.md` | Expansion cards (podules): bundled devices, configuration, plugin ABI |
 | `setup-build-env.sh` | Install build dependencies (Debian/Ubuntu) |
+
+### Where your data lives
+
+When **installed** (e.g. from the `.deb`), the binary and read-only support files
+(ROMs, podule ROMs, templates) live under `/usr/share/rpcemu`, while your own
+machines, configs, ROMs, HostFS and logs are kept in a visible **`~/RPCEmu/`** folder,
+seeded from the shared templates on first run. An existing `~/.local/share/rpcemu` from
+an earlier version is migrated automatically. The **portable** `.tar.gz` instead keeps
+everything self-contained in its own folder.
 
 ---
 

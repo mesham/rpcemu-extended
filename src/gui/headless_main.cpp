@@ -85,6 +85,16 @@ bool HasConfigs(const std::string &dir)
 	return DirExists(WithSep(dir) + "configs");
 }
 
+/* Writable per-user data folder, matching the GUI (~/RPCEmu). */
+std::string HomeRpcemu()
+{
+	const char *home = getenv("HOME");
+	if (home == nullptr || home[0] == '\0') {
+		return {};
+	}
+	return WithSep(home) + "RPCEmu";
+}
+
 /*
  * Resolve the data and resource directories and hand them to the core. Mirrors
  * the precedence used by the GUI's wx-based resolver (env -> exe dir -> cwd ->
@@ -96,30 +106,42 @@ bool InitHeadlessPaths()
 	const char *env_data = getenv("RPCEMU_DATADIR");
 	const char *env_res = getenv("RPCEMU_RESOURCE_DIR");
 
-	std::string datadir;
+	const std::string exe = ExeDir();
+	const std::string cwd = CwdDir();
+	const std::string install = RPCEMU_INSTALL_DATADIR;
 
-	if (env_data != nullptr && env_data[0] != '\0') {
-		datadir = env_data;
+	/* Shared, read-only resources (ROM/config/podule seed data). */
+	std::string resourcedir;
+	if (env_res != nullptr && env_res[0] != '\0') {
+		resourcedir = env_res;
+	} else if (HasConfigs(exe)) {
+		resourcedir = exe;
+	} else if (HasConfigs(cwd)) {
+		resourcedir = cwd;
+	} else if (HasConfigs(install)) {
+		resourcedir = install;
+	} else if (DirExists("/usr/share/rpcemu/configs")) {
+		resourcedir = "/usr/share/rpcemu";
 	} else {
-		const std::string exe = ExeDir();
-		const std::string cwd = CwdDir();
-		const std::string install = RPCEMU_INSTALL_DATADIR;
-
-		if (HasConfigs(exe)) {
-			datadir = exe;
-		} else if (HasConfigs(cwd)) {
-			datadir = cwd;
-		} else if (HasConfigs(install)) {
-			datadir = install;
-		} else if (DirExists("/usr/share/rpcemu/configs")) {
-			datadir = "/usr/share/rpcemu";
-		} else {
-			return false;
-		}
+		return false;
 	}
 
-	const std::string resourcedir =
-	    (env_res != nullptr && env_res[0] != '\0') ? std::string(env_res) : datadir;
+	/* Writable per-user data. Portable/dev builds keep everything beside the
+	   binary (configs found in exe/cwd); an installed build uses ~/RPCEmu, which
+	   the GUI seeds on first run (or override with RPCEMU_DATADIR). */
+	std::string datadir;
+	if (env_data != nullptr && env_data[0] != '\0') {
+		datadir = env_data;
+	} else if (HasConfigs(exe)) {
+		datadir = exe;
+	} else if (HasConfigs(cwd)) {
+		datadir = cwd;
+	} else {
+		datadir = HomeRpcemu();
+		if (datadir.empty()) {
+			datadir = resourcedir;
+		}
+	}
 
 	/* The core appends a trailing separator itself, so pass the paths as-is. */
 	rpcemu_set_datadir(datadir.c_str());

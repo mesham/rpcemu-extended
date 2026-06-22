@@ -3,6 +3,11 @@
 
 #include <wx/wx.h>
 
+#include <map>
+#include <vector>
+
+class wxFileConfig;
+
 extern "C" {
 #include "rpcemu.h"
 }
@@ -45,6 +50,12 @@ private:
 	void BuildUi();
 	void BuildHardDiscPanel(wxWindow *parent, wxSizer *parent_sizer, HardDiscPanel &panel, int drive_num,
 	                        int ide_index);
+	wxSizer *BuildPoduleSection(wxWindow *parent);
+	void LoadPoduleSettings(wxFileConfig &settings);
+	void SavePoduleSettings(wxFileConfig &settings);
+	void RebuildPoduleChoices();
+	void OnPoduleChanged(wxCommandEvent &event);
+	void OnPoduleConfigure(int slot);
 	void LoadSettings();
 	void SaveSettings();
 	void ApplySavedSettingsToGlobalConfig(const wxString &rom_dir, int mem_size, int vram_internal,
@@ -95,6 +106,19 @@ private:
 	wxStaticText *hd_reset_note_ = nullptr;
 	HardDiscPanel hd4_panel_;
 	HardDiscPanel hd5_panel_;
+
+	/* Podule slot selection. podule_selection_[i] is the chosen podule
+	   short_name for slot i ("" == none); podule_item_names_[i][k] maps choice
+	   k of combo i back to a short_name (lists differ per combo because a
+	   podule already used elsewhere is hidden). */
+	std::vector<wxChoice *> podule_combos_;
+	std::vector<wxButton *> podule_config_btns_;
+	std::vector<wxString> podule_selection_;
+	std::vector<std::vector<wxString>> podule_item_names_;
+	std::vector<std::pair<wxString, wxString>> podule_available_; /* short_name, display */
+	/* Per-podule config, keyed by section "<short_name>.<slot>" -> key -> value.
+	   Loaded from / saved to this machine's .cfg [PoduleConfig] groups. */
+	std::map<wxString, std::map<wxString, wxString>> podule_kv_;
 };
 
 #endif

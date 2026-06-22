@@ -747,6 +747,10 @@ resetrpc(void)
 	}
 #endif
 
+	/* Install plugin-ABI podules into any remaining free slots, after the
+	   legacy extension-ROM and network podules have claimed theirs. */
+	podules_init_headers();
+
 	cycles = 0;
 
 	peripheral_config_apply();
@@ -862,6 +866,7 @@ rpcemu_start(void)
         if (config.cdromtype == 2) /* ISO */
                 iso_open(config.isoname);
         initpodulerom();
+        podule_build_list();
 
 	/* Other components are initialised in the same way as the hardware
 	   being reset */

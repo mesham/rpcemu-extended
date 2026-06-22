@@ -6,6 +6,7 @@
 #include <string>
 
 #include <wx/dir.h>
+#include <wx/filefn.h>
 #include <wx/filename.h>
 #include <wx/log.h>
 #include <wx/stdpaths.h>
@@ -35,22 +36,56 @@ static bool HasConfigsDir(const wxString &base)
 	return wxDirExists(NormalizeDirPath(base) + "configs");
 }
 
+/* Writable per-user data lives in a visible ~/RPCEmu folder (machines, configs,
+   ROMs, hostfs, logs). */
 static wxString UserDataRoot()
 {
-	const char *xdg_data_home = getenv("XDG_DATA_HOME");
+	const char *home = getenv("HOME");
+	const wxString base = (home && home[0] != '\0') ? wxString::FromUTF8(home) : wxString(".");
+	return NormalizeDirPath(base + wxFileName::GetPathSeparator() + "RPCEmu");
+}
+
+/* Location used before the move to ~/RPCEmu (XDG ~/.local/share/rpcemu), kept
+   only so existing data can be migrated once. */
+static wxString LegacyUserDataRoot()
+{
+	const char *xdg = getenv("XDG_DATA_HOME");
 	wxString base;
-	if (xdg_data_home && xdg_data_home[0] != '\0') {
-		base = wxString::FromUTF8(xdg_data_home);
+	if (xdg && xdg[0] != '\0') {
+		base = wxString::FromUTF8(xdg);
 	} else {
 		const char *home = getenv("HOME");
-		if (home && home[0] != '\0') {
-			base = wxString::FromUTF8(home) + wxFileName::GetPathSeparator() + ".local" +
-			       wxFileName::GetPathSeparator() + "share";
-		} else {
-			base = ".local/share";
-		}
+		base = (home && home[0] != '\0')
+		    ? (wxString::FromUTF8(home) + wxFileName::GetPathSeparator() + ".local" +
+		       wxFileName::GetPathSeparator() + "share")
+		    : wxString(".local/share");
 	}
 	return NormalizeDirPath(base + wxFileName::GetPathSeparator() + "rpcemu");
+}
+
+/* One-time move of a pre-existing ~/.local/share/rpcemu to ~/RPCEmu. Only runs
+   when the new location does not yet exist, so it never clobbers user data. */
+static void MigrateLegacyUserData(const wxString &user_dir)
+{
+	const wxString legacy = LegacyUserDataRoot();
+	if (user_dir == legacy) {
+		return; /* nothing to do (shouldn't happen) */
+	}
+	if (wxDirExists(user_dir) || !wxDirExists(legacy)) {
+		return;
+	}
+	/* Strip trailing separators for rename(). */
+	wxFileName from(user_dir), to(user_dir);
+	from.AssignDir(legacy);
+	to.AssignDir(user_dir);
+	const wxString from_path = from.GetPath();
+	const wxString to_path = to.GetPath();
+	if (wxRenameFile(from_path, to_path, false)) {
+		wxLogMessage("RPCEmu: migrated existing data from %s to %s", from_path, to_path);
+	} else {
+		wxLogWarning("RPCEmu: could not migrate %s to %s; a fresh data folder "
+		             "will be created.", from_path, to_path);
+	}
 }
 
 static std::string DirPathForCore(const wxString &dir)
@@ -203,6 +238,12 @@ void InitRpcemuPaths()
 	}
 	if (resource_dir.empty()) {
 		resource_dir = user_dir;
+	}
+
+	/* Move a pre-existing ~/.local/share/rpcemu to ~/RPCEmu (only when the user
+	   dir is the default home location and the new folder doesn't exist yet). */
+	if (user_dir == UserDataRoot()) {
+		MigrateLegacyUserData(user_dir);
 	}
 
 	rpcemu_set_datadir(DirPathForCore(user_dir).c_str());

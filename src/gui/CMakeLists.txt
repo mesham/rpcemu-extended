@@ -15,6 +15,7 @@ set(GUI_SOURCES
     config_selector_dialog.cpp
     config_paths.cpp
     machine_edit_dialog.cpp
+    podule_config_dialog.cpp
     machine_inspector_window.cpp
     about_dialog.cpp
     nat_edit_dialog.cpp

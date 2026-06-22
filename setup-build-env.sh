@@ -42,7 +42,7 @@ echo "Updating package lists..."
 sudo apt update
 
 echo ""
-echo "Installing build tools, CMake, wxWidgets, SDL2, and VNC..."
+echo "Installing build tools, CMake, wxWidgets, SDL2, ALSA, and VNC..."
 sudo apt install -y \
 	build-essential \
 	cmake \
@@ -50,6 +50,7 @@ sudo apt install -y \
 	libwxgtk3.2-dev \
 	libgtk-3-dev \
 	libsdl2-dev \
+	libasound2-dev \
 	libgs-dev \
 	ghostscript \
 	libvncserver-dev
@@ -69,7 +70,7 @@ if [ "$INSTALL_CROSS_ARM64" = true ]; then
 	echo "For cross-compiled wxWidgets builds you may also need arm64 dev libraries:"
 	echo "  sudo dpkg --add-architecture arm64"
 	echo "  sudo apt update"
-	echo "  sudo apt install libwxgtk3.2-dev:arm64 libsdl2-dev:arm64 libvncserver-dev:arm64"
+	echo "  sudo apt install libwxgtk3.2-dev:arm64 libsdl2-dev:arm64 libasound2-dev:arm64 libvncserver-dev:arm64"
 fi
 
 if [ "$INSTALL_PODULES" = true ]; then

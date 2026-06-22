@@ -36,3 +36,6 @@
 *.rej
 *.bak
 .DS_Store
+
+# Upstream reference sources (Arculator etc.) - study only, never committed
+/reference/

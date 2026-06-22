@@ -22,6 +22,18 @@ set(RPCEMU_CORE_SOURCES
     sound.c
     vidc20.c
     podules.c
+    podule_config.c
+    podules/aka05.c
+    podules/midimax.c
+    podules/aka16.c
+    podules/aka12.c
+    podules/lark.c
+    podules/common/n16550.c
+    podules/common/scc2691.c
+    podules/common/6522.c
+    podules/ad1848.c
+    podules/am7202a.c
+    podules/common/sound_out_sdl2.c
     podulerom.c
     icside.c
     rpc.c
@@ -76,6 +88,12 @@ target_include_directories(rpcemu_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/slirp
 )
 
+# Shared podule support code (UART, MIDI interface, ...) lives in podules/common,
+# so device sources can include those headers by name (e.g. "n16550.h").
+target_include_directories(rpcemu_core PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/podules/common
+)
+
 target_compile_definitions(rpcemu_core PUBLIC
     CONFIG_SLIRP
     RPCEMU_VERSION="${PROJECT_VERSION}"
@@ -92,7 +110,37 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "ppc|ppc64|powerpc")
     target_compile_definitions(rpcemu_core PUBLIC _RPCEMU_BIG_ENDIAN)
 endif()
 
-target_link_libraries(rpcemu_core PUBLIC pthread)
+target_link_libraries(rpcemu_core PUBLIC pthread ${CMAKE_DL_LIBS})
+
+# SDL2 is needed by the podule sound-output pathway (common/sound_out_sdl2.c).
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(SDL2 sdl2)
+endif()
+if(SDL2_FOUND)
+    target_include_directories(rpcemu_core PRIVATE ${SDL2_INCLUDE_DIRS})
+    target_link_libraries(rpcemu_core PUBLIC ${SDL2_LIBRARIES})
+endif()
+
+# Podule MIDI and sound-input backends: real ALSA pathways where available,
+# stubs otherwise.
+if(PkgConfig_FOUND)
+    pkg_check_modules(ALSA alsa)
+endif()
+if(ALSA_FOUND)
+    target_sources(rpcemu_core PRIVATE
+        podules/common/midi_alsa.c
+        podules/common/sound_alsain.c)
+    target_include_directories(rpcemu_core PRIVATE ${ALSA_INCLUDE_DIRS})
+    target_link_libraries(rpcemu_core PUBLIC ${ALSA_LIBRARIES})
+    target_compile_definitions(rpcemu_core PRIVATE RPCEMU_MIDI_ALSA)
+    message(STATUS "Podule MIDI + sound-in backend: ALSA")
+else()
+    target_sources(rpcemu_core PRIVATE
+        podules/common/midi_stub.c
+        podules/common/sound_in_null.c)
+    message(STATUS "Podule MIDI + sound-in backend: stub (no ALSA)")
+endif()
 
 # Expose the JIT test hooks (codegen_test_compile/_interp) for the differential
 # flag tester. amd64 dynarec only; releases can disable with RPCEMU_BUILD_TESTS=OFF.

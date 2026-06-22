@@ -9,7 +9,10 @@
 extern "C" {
 #include "rpcemu.h"
 #include "peripheral_config.h"
+#include "podule_config.h"
 }
+
+#include <wx/arrstr.h>
 
 static char current_config_path[512] = "";
 
@@ -237,6 +240,66 @@ static void config_nat_rules_save(wxFileConfig &settings)
 		settings.Write("type", port_forward_rules[i].type == PORT_FORWARD_TCP ? "TCP" : "UDP");
 		settings.Write("emu_port", static_cast<long>(port_forward_rules[i].emu_port));
 		settings.Write("host_port", static_cast<long>(port_forward_rules[i].host_port));
+	}
+}
+
+static void podule_config_load(wxFileConfig &settings)
+{
+	podule_cfg_reset();
+
+	/* Slot assignments: [Podules] slot0=..., slot1=... */
+	settings.SetPath("/Podules");
+	for (int i = 0; i < PODULE_CONFIG_SLOTS; i++) {
+		wxString val;
+		if (settings.Read(wxString::Format("slot%d", i), &val) && !val.IsEmpty()) {
+			podule_cfg_set_slot(i, val.utf8_str().data());
+		}
+	}
+
+	/* Per-podule key/value store: [PoduleConfig/<section>] key=value.
+	   Collect the group names first - changing SetPath mid-enumeration would
+	   invalidate the group iterator. */
+	settings.SetPath("/PoduleConfig");
+	wxArrayString groups;
+	wxString group;
+	long gidx;
+	for (bool c = settings.GetFirstGroup(group, gidx); c; c = settings.GetNextGroup(group, gidx)) {
+		groups.Add(group);
+	}
+	for (size_t gi = 0; gi < groups.GetCount(); gi++) {
+		const wxString &section = groups[gi];
+		settings.SetPath("/PoduleConfig/" + section);
+
+		wxString entry;
+		long eidx;
+		for (bool e = settings.GetFirstEntry(entry, eidx); e; e = settings.GetNextEntry(entry, eidx)) {
+			wxString value;
+			settings.Read(entry, &value);
+			podule_cfg_set_string(section.utf8_str().data(),
+			                      entry.utf8_str().data(),
+			                      value.utf8_str().data());
+		}
+		settings.SetPath("/PoduleConfig");
+	}
+}
+
+static void podule_config_save(wxFileConfig &settings)
+{
+	settings.SetPath("/Podules");
+	for (int i = 0; i < PODULE_CONFIG_SLOTS; i++) {
+		const char *name = podule_cfg_get_slot(i);
+		settings.Write(wxString::Format("slot%d", i), wxString::FromUTF8(name ? name : ""));
+	}
+
+	const int n = podule_cfg_entry_count();
+	for (int i = 0; i < n; i++) {
+		const char *section;
+		const char *key;
+		const char *value;
+		if (podule_cfg_get_entry(i, &section, &key, &value)) {
+			settings.SetPath(wxString("/PoduleConfig/") + wxString::FromUTF8(section));
+			settings.Write(wxString::FromUTF8(key), wxString::FromUTF8(value));
+		}
 	}
 }
 
@@ -504,6 +567,7 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 
 	config_nat_rules_load(settings);
 	peripheral_config_load(settings);
+	podule_config_load(settings);
 }
 
 extern "C" void config_save(Config *cfg)
@@ -560,5 +624,6 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 
 	config_nat_rules_save(settings);
 	peripheral_config_save(settings);
+	podule_config_save(settings);
 	settings.Flush();
 }
