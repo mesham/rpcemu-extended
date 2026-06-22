@@ -86,3 +86,8 @@ set_target_properties(${RPCEMU_GUI_TARGET} PROPERTIES
 )
 
 install(TARGETS ${RPCEMU_GUI_TARGET} RUNTIME DESTINATION bin)
+
+# Desktop launcher with Exec= pointing at the actual binary name.
+configure_file(${CMAKE_SOURCE_DIR}/packaging/rpcemu.desktop
+               ${CMAKE_BINARY_DIR}/rpcemu.desktop @ONLY)
+install(FILES ${CMAKE_BINARY_DIR}/rpcemu.desktop DESTINATION share/applications)

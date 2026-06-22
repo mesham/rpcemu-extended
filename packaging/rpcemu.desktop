@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=RPCEmu
 Comment=Risc PC and A7000 emulator
-Exec=rpcemu-recompiler
+Exec=@RPCEMU_GUI_TARGET@
 Path=
 Icon=applications-games
 Terminal=false

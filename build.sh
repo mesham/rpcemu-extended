@@ -199,6 +199,9 @@ stage_linux_release() {
 	cp -f setup-runtime-env.sh "$LINUX_RELEASE/" 2>/dev/null || true
 	if [ -f packaging/rpcemu.desktop ]; then
 		cp -f packaging/rpcemu.desktop "$LINUX_RELEASE/"
+		# Point the launcher at the actual binary for this build (recompiler or
+		# interpreter); packaging/rpcemu.desktop uses an @RPCEMU_GUI_TARGET@ token.
+		sed -i "s/@RPCEMU_GUI_TARGET@/$binary_name/" "$LINUX_RELEASE/rpcemu.desktop"
 	fi
 
 	cp -f "build/bin/$binary_name" "$release_binary"

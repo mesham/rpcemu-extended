@@ -18,7 +18,7 @@ jobs:
       - name: Install dependencies
         run: bash setup-build-env.sh
 
-      - name: Build and package (amd64)
+      - name: Build and package (amd64, dynarec)
         run: |
           chmod +x build.sh setup-build-env.sh
           if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
@@ -42,23 +42,58 @@ jobs:
             releases/linux/amd64/*.deb
           if-no-files-found: error
 
+  linux-arm64:
+    # Native arm64 hosted runner (free for public repos). The ARM dynarec backend
+    # does not exist, so arm64 uses the interpreter (--interpreter).
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: bash setup-build-env.sh
+
+      - name: Build and package (arm64, interpreter)
+        run: |
+          chmod +x build.sh setup-build-env.sh
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            ./build.sh --interpreter --deb --zip
+          else
+            ./build.sh --interpreter --zip
+          fi
+
+      - name: Smoke test binary
+        run: |
+          file releases/linux/arm64/rpcemu-interpreter | grep -i ELF
+          ls -la releases/linux/arm64/
+
+      - name: Upload Linux arm64 release
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcemu-linux-arm64
+          path: |
+            releases/linux/arm64/
+            releases/linux/*.tar.gz
+            releases/linux/arm64/*.deb
+          if-no-files-found: error
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [linux-amd64]
+    needs: [linux-amd64, linux-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - name: Download Linux amd64 artifact
+      - name: Download all build artifacts
         uses: actions/download-artifact@v4
         with:
-          name: rpcemu-linux-amd64
           path: upload
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: upload/*
+          files: |
+            upload/**/*.deb
+            upload/**/*.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

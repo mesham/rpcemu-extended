@@ -51,7 +51,9 @@ else()
     install(DIRECTORY default/ DESTINATION share/rpcemu/machines/Default)
 endif()
 install(FILES README.md COPYING COMPILE.md docs/dynarec.md DESTINATION share/doc/rpcemu)
-install(FILES packaging/rpcemu.desktop DESTINATION share/applications)
+# The .desktop launcher's Exec must match the actual binary (rpcemu-recompiler
+# on x86 dynarec builds, rpcemu-interpreter on arm64/interpreter builds); it is
+# configured and installed from src/gui/CMakeLists.txt where the name is known.
 
 set(CPACK_PACKAGE_NAME "rpcemu")
 set(CPACK_PACKAGE_VENDOR "Andrew Timmins")
