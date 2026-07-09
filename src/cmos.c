@@ -201,33 +201,57 @@ cmos_update_checksum(void)
 }
 
 /**
- * Load CMOS data from cmos.ram file on file system
+ * Try to load 256 bytes of CMOS data from a file into cmosram[].
+ *
+ * @param fn Path to the cmos.ram file
+ * @return 1 on success, 0 if the file could not be opened
+ */
+static int
+cmos_load_file(const char *fn)
+{
+	FILE *cmosf = fopen(fn, "rb");
+
+	if (cmosf == NULL) {
+		return 0;
+	}
+
+	if (fread(cmosram, 1, 256, cmosf) != 256) {
+		fatal("Unable to read from CMOS file '%s', %s", fn,
+		      strerror(errno));
+	}
+	fclose(cmosf);
+	return 1;
+}
+
+/**
+ * Load CMOS data from cmos.ram file on file system.
+ *
+ * Prefer the machine-specific file; if it is missing (e.g. a machine dir
+ * created without seeding a CMOS), fall back to the bundled default template
+ * in the resource directory. A zero-filled CMOS is never acceptable - it reads
+ * as corrupt to RISC OS and would then be written back to disk - so if neither
+ * file can be loaded this is a fatal error.
  */
 void
 cmos_init(void)
 {
-        char fn[512];
-        FILE *cmosf;
+	char fn[512];
 
-        /* Load cmos.ram from machine-specific directory */
+	/* Load cmos.ram from the machine-specific directory */
 	snprintf(fn, sizeof(fn), "%scmos.ram", rpcemu_get_machine_datadir());
-        cmosf = fopen(fn, "rb");
+	if (cmos_load_file(fn)) {
+		return;
+	}
 
-        if (cmosf) {
-                /* File open suceeded, load CMOS data */
-                if (fread(cmosram, 1, 256, cmosf) != 256) {
-                        fatal("Unable to read from CMOS file '%s', %s", fn,
-                              strerror(errno));
-                }
-                fclose(cmosf);
-        } else {
-                /* Report failure and initialise the array */
-                fprintf(stderr, "Could not open CMOS file '%s': %s\n", fn, 
-                        strerror(errno));
-                memset(cmosram, 0, 256);
-        }
+	/* Machine has no cmos.ram yet; seed from the bundled default template */
+	fprintf(stderr, "No CMOS file '%s', seeding from default template\n", fn);
+	snprintf(fn, sizeof(fn), "%sdefault/cmos.ram", rpcemu_get_resourcedir());
+	if (cmos_load_file(fn)) {
+		return;
+	}
 
-
+	fatal("Unable to open CMOS file or default template '%s': %s", fn,
+	      strerror(errno));
 }
 
 /**
