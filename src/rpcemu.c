@@ -48,6 +48,7 @@
 #include "fdc.h"
 #include "hostfs.h"
 #include "hostcmd.h"
+#include "debugcmd.h"
 #include "disc.h"
 #include "disc_adf.h"
 #include "disc_hfe.h"
@@ -104,6 +105,8 @@ Config config = {
 	"",			/* vnc_password */
 	1,			/* hostcmd_enabled (ON by default) */
 	"",			/* hostcmd_socket (empty => <datadir>hostcmd.sock) */
+	1,			/* debug_enabled (ON by default) */
+	"",			/* debug_socket (empty => <datadir>rpcemu-debug.sock) */
 };
 
 /* Performance measuring variables */
@@ -741,6 +744,7 @@ resetrpc(void)
         podulerom_reset(); // must be called after podules_reset()
         hostfs_reset();
         hostcmd_reset();
+        debugcmd_reset();
 
 
 #ifdef RPCEMU_NETWORKING
@@ -848,6 +852,7 @@ rpcemu_start(void)
 {
 	hostfs_init();
 	hostcmd_init();
+	debugcmd_init();
 	parallel_bus_init();
 	serial_bus_init();
 	printer_init();
@@ -946,6 +951,7 @@ execrpcemu(void)
 	printer_poll();
 	serial_modem_poll();
 	hostcmd_poll();
+	debugcmd_poll();
 }
 
 /**
@@ -995,6 +1001,7 @@ rpcemu_idle(void)
 		}
 		serial_modem_poll();
 		hostcmd_poll();
+	debugcmd_poll();
 		/* Sleep if no interrupts pending */
 		if (!arm.event) {
 #ifdef RPCEMU_WIN
@@ -1019,6 +1026,7 @@ rpcemu_idle(void)
 			printer_poll();
 			serial_modem_poll();
 			hostcmd_poll();
+	debugcmd_poll();
 			rpcemu_idle_process_events();
 		}
 	}
@@ -1033,6 +1041,7 @@ void
 endrpcemu(void)
 {
         hostcmd_close();
+        debugcmd_close();
         sound_thread_close();
         closevideo();
         iomd_end();

@@ -568,6 +568,12 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	strncpy(cfg->hostcmd_socket, sText.utf8_str().data(), sizeof(cfg->hostcmd_socket) - 1);
 	cfg->hostcmd_socket[sizeof(cfg->hostcmd_socket) - 1] = '\0';
 
+	settings.Read("debug_enabled", &value, 1L);
+	cfg->debug_enabled = static_cast<int>(value);
+	settings.Read("debug_socket", &sText, wxEmptyString);
+	strncpy(cfg->debug_socket, sText.utf8_str().data(), sizeof(cfg->debug_socket) - 1);
+	cfg->debug_socket[sizeof(cfg->debug_socket) - 1] = '\0';
+
 	settings.Read("network_capture", &sText, wxEmptyString);
 	config_replace_strdup(&cfg->network_capture, sText);
 
@@ -628,6 +634,8 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("vnc_password", wxString(cfg->vnc_password, wxConvUTF8));
 	settings.Write("hostcmd_enabled", static_cast<long>(cfg->hostcmd_enabled));
 	settings.Write("hostcmd_socket", wxString(cfg->hostcmd_socket, wxConvUTF8));
+	settings.Write("debug_enabled", static_cast<long>(cfg->debug_enabled));
+	settings.Write("debug_socket", wxString(cfg->debug_socket, wxConvUTF8));
 	settings.Write("network_capture", cfg->network_capture ? wxString(cfg->network_capture, wxConvUTF8) : wxString());
 
 	config_nat_rules_save(settings);

@@ -17,6 +17,7 @@ extern "C" {
 #include "arm_disasm.h"
 #include "cdrom-iso.h"
 #include "cmos.h"
+#include "debugcmd.h"
 #include "hostfs.h"
 #include "ide.h"
 #include "keyboard.h"
@@ -1112,6 +1113,10 @@ void EmulatorHost::MainEmuLoop()
 				NotifyDebuggerStateChanged();
 				last_paused = true;
 			}
+			// Keep the debugger control socket serviced while the CPU is
+			// paused (execrpcemu() isn't called here, so its debugcmd_poll()
+			// doesn't run) — otherwise a client could never resume/inspect.
+			debugcmd_poll();
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 			continue;
 		}

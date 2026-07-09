@@ -208,6 +208,8 @@ typedef struct {
 	char vnc_password[64];	/**< Password for VNC authentication (empty = no auth) */
 	int hostcmd_enabled;	/**< Enable the HostCmd control socket (host drives the RISC OS CLI) */
 	char hostcmd_socket[512];	/**< Socket spec: empty = <datadir>hostcmd.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
+	int debug_enabled;	/**< Enable the DebugCmd control socket (host inspects/controls the emulated CPU) */
+	char debug_socket[512];	/**< Socket spec: empty = <datadir>rpcemu-debug.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
 } Config;
 
 extern Config config;

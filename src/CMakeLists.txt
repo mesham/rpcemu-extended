@@ -14,6 +14,7 @@ set(RPCEMU_CORE_SOURCES
     hostfs.c
     hostfs-unix.c
     hostcmd.c
+    debugcmd.c
     ide.c
     iomd.c
     keyboard.c
