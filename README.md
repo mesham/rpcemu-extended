@@ -317,6 +317,7 @@ how the JIT is built and when it falls back to interpretation.
 - Serial log-to-file and a real telnet TCP modem (dial BBSes, 8-bit-clean transfers)
 - Machine Inspector with disassembly and memory browser
 - Dynarec debugger hooks for consistent breakpoint/watchpoint behaviour
+- Robustness & memory-safety hardening: bounds-checked HFE/ADF disc-image and HostFS input handling, FPA faults raised as undefined instructions rather than aborting the emulator, and a fixed use-after-free on GUI shutdown
 - CMake build system for Linux (amd64 and arm64)
 
 ---
