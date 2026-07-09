@@ -217,6 +217,19 @@ stage_linux_release() {
 		ln -sf rpcemu-run "$LINUX_RELEASE/rpcemu-shell"
 	fi
 
+	# MCP server: drive a RISC OS machine (HostCmd + HostFS + VNC + the debugger
+	# control socket) from an MCP client. Python; ships with requirements.txt +
+	# README + config example. See tools/mcp/README.md and docs/debugcmd.md.
+	if [ -d tools/mcp ]; then
+		mkdir -p "$LINUX_RELEASE/tools/mcp"
+		cp -f tools/mcp/rpcemu_mcp.py tools/mcp/requirements.txt \
+		      tools/mcp/README.md tools/mcp/mcp.json.example \
+		      "$LINUX_RELEASE/tools/mcp/" 2>/dev/null || true
+	fi
+
+	# Ship the full docs/ set so the README and MCP/HostCmd/debugger docs resolve.
+	[ -d docs ] && cp -a docs "$LINUX_RELEASE/" 2>/dev/null || true
+
 	cat > "$LINUX_RELEASE/BUILDINFO.txt" <<EOF
 RPCEmu (Spork Edition) $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")

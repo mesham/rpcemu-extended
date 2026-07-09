@@ -50,7 +50,12 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/machines/Default")
 else()
     install(DIRECTORY default/ DESTINATION share/rpcemu/machines/Default)
 endif()
-install(FILES README.md COPYING COMPILE.md docs/dynarec.md DESTINATION share/doc/rpcemu)
+# MCP server (Python): drive a RISC OS machine from an MCP client, including
+# the debugger control socket. See tools/mcp/README.md.
+install(DIRECTORY tools/mcp/ DESTINATION share/rpcemu/mcp
+        PATTERN "__pycache__" EXCLUDE)
+install(FILES README.md COPYING COMPILE.md DESTINATION share/doc/rpcemu)
+install(DIRECTORY docs/ DESTINATION share/doc/rpcemu)
 # The .desktop launcher's Exec must match the actual binary (rpcemu-recompiler
 # on x86 dynarec builds, rpcemu-interpreter on arm64/interpreter builds); it is
 # configured and installed from src/gui/CMakeLists.txt where the name is known.

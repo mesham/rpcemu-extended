@@ -22,6 +22,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Built-in VNC server** — remote desktop access from any VNC client.
 - **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: needs no X11/Wayland, so it runs on a headless server. See [Headless mode](#headless-mode).
 - **HostCmd — drive the RISC OS command line from the host** — run guest commands from the host over a local socket and stream their output back, with the return code. Edit on the host (via HostFS), compile on the guest (`rpcemu-run -- cc -c hello`), or open an interactive RISC OS shell (`rpcemu-shell`). Ideal for IDE/LLM-driven development. See [docs/hostcmd.md](docs/hostcmd.md).
+- **MCP server — drive RISC OS from Claude / an agent** — a [Model Context Protocol](https://modelcontextprotocol.io) server exposing tools to run guest commands, read/write/list files (via HostFS), capture and click the screen, and inspect/control the emulated ARM CPU (registers, memory, disassembly, breakpoints, watchpoints, single-step). Point Claude Code / Desktop at it for agent-driven RISC OS development. Setup and tool reference in [tools/mcp/README.md](tools/mcp/README.md).
 - **Parallel port** — log raw output to a file, or a virtual printer that captures jobs to `.prn` files with optional in-process PDF conversion via Ghostscript.
 - **Serial port** — log to file, or a TCP "modem" that dials real telnet BBSes (`ATDT host:port`) with a telnet client layer and 8-bit-clean X/Y/ZMODEM transfers. See [docs/peripherals.md](docs/peripherals.md).
 - **Machine Inspector** — live CPU, disassembly, memory, peripheral, and debugger views with auto-refresh.
@@ -69,6 +70,8 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/peripherals.md` | Serial and parallel ports (file logging, TCP modem, printer) |
 | `docs/podules.md` | Expansion cards (podules): bundled devices, configuration, plugin ABI |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
+| `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
+| `docs/debugcmd.md` | DebugCmd: control the emulated CPU over a socket (registers, memory, disassembly, breakpoints, single-step) |
 | `setup-build-env.sh` | Install build dependencies (Debian/Ubuntu) |
 
 ### Where your data lives
@@ -313,6 +316,7 @@ how the JIT is built and when it falls back to interpretation.
 - Built-in VNC server
 - Headless mode for display-less servers (run a machine over VNC with no GUI)
 - HostCmd: drive the guest RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) for edit-on-host/compile-on-guest workflows
+- MCP server for agent-driven RISC OS development: run commands, edit/build, screenshot, and inspect/control the emulated CPU (see `tools/mcp/`)
 - Virtual printer with optional Ghostscript PDF conversion
 - Serial log-to-file and a real telnet TCP modem (dial BBSes, 8-bit-clean transfers)
 - Machine Inspector with disassembly and memory browser
