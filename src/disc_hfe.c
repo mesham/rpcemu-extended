@@ -83,11 +83,38 @@ static int hfe_load_header(hfe_t *hfe)
 		return -1;
 	}
 
+	/* nr_of_tracks and nr_of_sides come straight from the (untrusted) image
+	   file. A zero in either would make the track-list allocation empty while
+	   hfe_seek() still indexes tracks[0..nr_of_tracks-1], reading out of
+	   bounds. Reject implausible geometry up front. */
+	if (header->nr_of_tracks == 0 || header->nr_of_sides == 0 ||
+	    header->nr_of_sides > 2) {
+		rpclog("HFE: invalid geometry (%u tracks, %u sides)\n",
+		       header->nr_of_tracks, header->nr_of_sides);
+		return -1;
+	}
+
 //        rpclog("HFE: %i tracks, %i sides\n", header->nr_of_tracks, header->nr_of_sides);
 //        rpclog("  track_list_offset: %i\n", header->track_list_offset);
-	hfe->tracks = malloc(header->nr_of_tracks * header->nr_of_sides * sizeof(hfe_track_t));
-	fseek(hfe->f, header->track_list_offset * 0x200, SEEK_SET);
-	fread(hfe->tracks, header->nr_of_tracks * header->nr_of_sides * sizeof(hfe_track_t), 1, hfe->f);
+	{
+		size_t track_list_size = (size_t) header->nr_of_tracks *
+		                         header->nr_of_sides * sizeof(hfe_track_t);
+
+		hfe->tracks = malloc(track_list_size);
+		if (hfe->tracks == NULL) {
+			rpclog("HFE: could not allocate %zu-byte track list\n",
+			       track_list_size);
+			return -1;
+		}
+		memset(hfe->tracks, 0, track_list_size);
+		fseek(hfe->f, header->track_list_offset * 0x200, SEEK_SET);
+		if (fread(hfe->tracks, track_list_size, 1, hfe->f) != 1) {
+			rpclog("HFE: could not read track list\n");
+			free(hfe->tracks);
+			hfe->tracks = NULL;
+			return -1;
+		}
+	}
 
 	return 0;
 }
@@ -109,7 +136,13 @@ void hfe_load(int drive, const char *fn)
 			return;
 		hfe[drive].write_prot = 1;
 	}
-	hfe_load_header(&hfe[drive]);
+	if (hfe_load_header(&hfe[drive])) {
+		/* Malformed or unsupported image: don't wire up the drive, or a
+		   later seek would dereference the (NULL) track list. */
+		fclose(hfe[drive].f);
+		hfe[drive].f = NULL;
+		return;
+	}
 	hfe[drive].mfm.write_protected = hfe[drive].write_prot;
 	hfe[drive].mfm.writeback = hfe_writeback;
 
@@ -222,7 +255,7 @@ static void hfe_seek(int drive, int track)
 	mfm_t *mfm = &hfe[drive].mfm;
 	int c;
 
-	if (!hfe[drive].f) {
+	if (!hfe[drive].f || hfe[drive].tracks == NULL) {
 		memset(mfm->track_data[0], 0, 65536);
 		memset(mfm->track_data[1], 0, 65536);
 		return;

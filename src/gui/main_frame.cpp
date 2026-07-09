@@ -3,6 +3,7 @@
 #include "main_frame.h"
 
 #include <algorithm>
+#include <chrono>
 #include <condition_variable>
 #include <cstring>
 #include <mutex>
@@ -999,6 +1000,16 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 		return;
 	}
 
+	// During shutdown the UI thread stops processing events (it blocks in
+	// EmulatorHost::Join() while tearing the emulator down), so a queued
+	// CallAfter would never run. Blocking on it here would deadlock the VIDC
+	// thread and prevent it from being joined. Skip the frame entirely — there
+	// is nothing left to draw, and update.buffer points into emulator memory
+	// that is about to be freed.
+	if (quited) {
+		return;
+	}
+
 	struct SyncState {
 		VideoUpdate update;
 		std::mutex mutex;
@@ -1020,8 +1031,14 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 		state->cv.notify_one();
 	});
 
+	// Bound the wait so that if shutdown begins after the check above (quited
+	// set while we are already blocked here), this thread still wakes and
+	// returns rather than deadlocking against a UI thread stuck in Join().
+	// quited is written once, monotonically, so a plain read is sufficient.
 	std::unique_lock<std::mutex> lock(state->mutex);
-	state->cv.wait(lock, [&state]() { return state->done; });
+	while (!state->done && !quited) {
+		state->cv.wait_for(lock, std::chrono::milliseconds(50));
+	}
 }
 
 void MainFrame::PostMoveHostMouse(const MouseMoveUpdate &update)

@@ -98,6 +98,26 @@ static void convert64to80(uint32_t *temp, double tf)
   Opcodes Ex, bit 4 clear - Data processing
   Opcodes Ex, bit 4 set   - Register transfer
   Opcodex Ex, bit 4 set, RD=15 - Compare*/
+
+/**
+ * Raise an ARM Undefined Instruction exception for an FPA opcode this
+ * (deliberately incomplete) FPA emulation cannot execute.
+ *
+ * Previously such opcodes called fatal()/exit(), taking down the whole
+ * emulator on a single unsupported (or malformed, guest-supplied) coprocessor
+ * instruction. Real hardware/RISC OS instead traps them as undefined, letting
+ * the guest handle or report the fault, so mirror that. The PC fixup matches
+ * the existing undefined path in the LDF/STF decode below.
+ */
+static void
+fpa_undefined(uint32_t opcode)
+{
+	rpclog("FPA: unsupported opcode %08X at %07X - raising undefined instruction\n",
+	       opcode, PC);
+	arm.reg[15] += 8;
+	arm_exception_undefined();
+}
+
 void fpaopcode(uint32_t opcode)
 {
         uint32_t temp[6];
@@ -319,9 +339,8 @@ void fpaopcode(uint32_t opcode)
                                 break;
 
                                 default:
-                                rpclog("Bad number of registers to load %06X\n",opcode&0x408000);
-                                arm_dump();
-                                exit(-1);
+                                fpa_undefined(opcode);
+                                return;
                         }
 //                        rpclog("Loaded %08X  %i  %f %f %f %f\n",opcode&0x408000,FD,fparegs[FD],fparegs[(FD+1)&7],fparegs[(FD+2)&7],fparegs[(FD+3)&7]);
                         if (!(opcode&0x1000000))
@@ -398,9 +417,8 @@ void fpaopcode(uint32_t opcode)
                                 break;
                                 
                                 default:
-                                rpclog("Bad number of registers to store %06X\n",opcode&0x408000);
-                                arm_dump();
-                                exit(-1);
+                                fpa_undefined(opcode);
+                                return;
                         }
                         if (!(opcode&0x1000000))
                         {
@@ -412,7 +430,7 @@ void fpaopcode(uint32_t opcode)
                         return;
                 }
                 /*LFM/SFM*/
-                fatal("SFM opcode %08X\n", opcode);
+                fpa_undefined(opcode);
                 return;
                 case 0xE:
                 if (opcode&0x10)
@@ -436,7 +454,7 @@ void fpaopcode(uint32_t opcode)
                                         linecyc -= FPA_CYCLES_COMPARE;
                                         return;
                                 }
-                                fatal("Compare opcode %08X %i\n", opcode, (opcode >> 21) & 7);
+                                fpa_undefined(opcode);
                                 return;
                         }
                         /*Register transfer*/
@@ -487,7 +505,7 @@ void fpaopcode(uint32_t opcode)
                                 linecyc -= FPA_CYCLES_SIMPLE;
                                 return;
                         }
-                        fatal("Register opcode %08X at %07X\n", opcode, PC);
+                        fpa_undefined(opcode);
                         return;
                 }
                 if (opcode&8) tempf=fconstants[opcode&7];
@@ -651,7 +669,7 @@ void fpaopcode(uint32_t opcode)
                         return;
                 }
                 /*Data processing*/
-                fatal("Bad data opcode %08X %06X\n", opcode, opcode & 0xF08000);
+                fpa_undefined(opcode);
                 return;
         }
 }

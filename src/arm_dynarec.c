@@ -860,6 +860,12 @@ arm_exec(void)
 					       config.mem_size,
 					       fault_addr,
 					       fault_status);
+					rpclog("  regs r0-r7:  %08x %08x %08x %08x %08x %08x %08x %08x\n",
+					       arm.reg[0], arm.reg[1], arm.reg[2], arm.reg[3],
+					       arm.reg[4], arm.reg[5], arm.reg[6], arm.reg[7]);
+					rpclog("  regs r8-r15: %08x %08x %08x %08x %08x %08x %08x %08x\n",
+					       arm.reg[8], arm.reg[9], arm.reg[10], arm.reg[11],
+					       arm.reg[12], arm.reg[13], arm.reg[14], arm.reg[15]);
 					if (data_abort_log_budget == 0) {
 						rpclog("Data Abort: further faults will not be logged\n");
 					}

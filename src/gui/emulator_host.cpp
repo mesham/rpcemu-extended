@@ -56,6 +56,7 @@ static pthread_cond_t sound_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t sound_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 static pthread_t video_thread;
+static bool video_thread_running = false;
 static pthread_cond_t video_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t video_mutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -162,6 +163,7 @@ extern "C" void vidcstartthread(void)
 	if (pthread_create(&video_thread, nullptr, vidcthreadrunner, nullptr)) {
 		fatal("Couldn't create vidc thread");
 	}
+	video_thread_running = true;
 
 #ifdef _GNU_SOURCE
 	pthread_setname_np(video_thread, "rpcemu: vidc");
@@ -170,7 +172,18 @@ extern "C" void vidcstartthread(void)
 
 extern "C" void vidcendthread(void)
 {
-	NOT_USED(video_thread);
+	// Cleanly stop and join the VIDC thread so it can no longer touch
+	// g_gui_bridge / g_vnc_server after teardown (previously this was a no-op,
+	// leaving a use-after-free window during shutdown). quited is already set
+	// by EmulatorHost::Stop() before we get here; wake the thread so it
+	// observes it, then wait for it to exit. PostVideoUpdate() is now bounded
+	// on quited, so the thread cannot be stuck blocking the join.
+	if (!video_thread_running) {
+		return;
+	}
+	vidcwakeupthread();
+	pthread_join(video_thread, nullptr);
+	video_thread_running = false;
 }
 
 extern "C" void vidcwakeupthread(void)

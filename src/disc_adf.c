@@ -70,6 +70,19 @@ void adf_load(int drive, const char *fn, int sectors, int size, int sides, int d
 	adf[drive].maxsector = (ftell(adf[drive].f)+1 ) / size;
 	adf[drive].skew = skew;
 
+	/* adf_seek()/adf_writeback() transfer a whole track (sectors * size) into
+	   the fixed per-side track_data[] buffer. Guard against a format whose
+	   track exceeds that buffer overrunning it (defence in depth: the shipped
+	   formats[] table stays within bounds, but a bad/new entry must not). */
+	if (sectors <= 0 || size <= 0 ||
+	    (size_t) sectors * (size_t) size > sizeof(adf[drive].track_data[0])) {
+		rpclog("adf_load: track size %d*%d exceeds %zu-byte buffer - refusing\n",
+		       sectors, size, sizeof(adf[drive].track_data[0]));
+		fclose(adf[drive].f);
+		adf[drive].f = NULL;
+		return;
+	}
+
 	drive_funcs[drive] = &adf_disc_funcs;
 	drive_funcs[drive]->seek(drive, disc_get_current_track(drive));
 }

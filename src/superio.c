@@ -271,7 +271,7 @@ superio_uart_trace(const char *op, uint32_t addr, uint32_t port, uint8_t byte)
     dlab = (com1.lcr & LCR_DLAB) ? 1 : 0;
     name = (dlab ? reg_dlab1 : reg_dlab0)[port - 0x3f8];
 
-    rpclog("SuperIO UART: %-5s addr=%08x port=0x%03x %-7s val=0x%02x (DLAB=%d IER=0x%02x LSR=0x%02x MCR=0x%02x pend=%d)\n",
+    if (0) rpclog("SuperIO UART: %-5s addr=%08x port=0x%03x %-7s val=0x%02x (DLAB=%d IER=0x%02x LSR=0x%02x MCR=0x%02x pend=%d)\n",
            op, addr, port, name, byte, dlab, com1.ier, com1.lsr, com1.mcr,
            com1.thre_int_pending);
 }

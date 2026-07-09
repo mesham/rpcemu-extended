@@ -335,7 +335,7 @@ iomd_write(uint32_t addr, uint32_t val)
                 return;
         case IOMD_0x018_IRQMSKA: /* IRQA mask */
                 if (val != iomd.irqa.mask) {
-                        rpclog("IOMD: IRQA mask = 0x%02x (was 0x%02x)\n", val, iomd.irqa.mask);
+                        if (0) rpclog("IOMD: IRQA mask = 0x%02x (was 0x%02x)\n", val, iomd.irqa.mask);
                 }
                 iomd.irqa.mask = val;
                 updateirqs();
@@ -351,7 +351,7 @@ iomd_write(uint32_t addr, uint32_t val)
 
         case IOMD_0x028_IRQMSKB: /* IRQB mask */
                 if (val != iomd.irqb.mask) {
-                        rpclog("IOMD: IRQB mask = 0x%02x (was 0x%02x)\n", val, iomd.irqb.mask);
+                        if (0) rpclog("IOMD: IRQB mask = 0x%02x (was 0x%02x)\n", val, iomd.irqb.mask);
                 }
                 iomd.irqb.mask = val;
                 updateirqs();

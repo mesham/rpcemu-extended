@@ -259,15 +259,24 @@ hostfs_ensure_buffer_size(size_t buffer_size_needed)
 static void
 get_string(ARMul_State *state, ARMword address, char *buf, size_t bufsize)
 {
+  size_t i;
+
   assert(state);
   assert(buf);
+  assert(bufsize > 0);
 
-  /* TODO Ensure we do not overrun the end of the passed-in space,
-     using the bufsize parameter */
-  while ((*buf = ARMul_LoadByte(state, address)) != '\0') {
-    buf++;
-    address++;
+  /* Copy at most bufsize-1 bytes from the guest, always NUL-terminating.
+     The guest controls both the string contents and its length, so an
+     over-long (or unterminated) string must not overrun the host buffer;
+     it is truncated instead. */
+  for (i = 0; i < bufsize - 1; i++) {
+    char c = (char) ARMul_LoadByte(state, address++);
+    buf[i] = c;
+    if (c == '\0') {
+      return;
+    }
   }
+  buf[i] = '\0';
 }
 
 /**
@@ -312,18 +321,32 @@ hostfs_object_set_timestamp(const char *host_path, ARMword load, ARMword exec)
   }
 }
 
+/**
+ * Convert a RISC OS path fragment into host form, writing at most
+ * \a host_path_size bytes (including the NUL terminator) to \a host_path.
+ *
+ * A '$' expands to HOSTFS_ROOT (potentially hundreds of bytes), and the
+ * RISC OS path may be guest-controlled, so the destination is bounded to
+ * prevent an overrun; output is truncated rather than allowed to overflow.
+ */
 static void
-riscos_path_to_host(const char *path, char *host_path)
+riscos_path_to_host(const char *path, char *host_path, size_t host_path_size)
 {
+  char *const end = host_path + host_path_size - 1; /* leave room for NUL */
+
   assert(path);
   assert(host_path);
+  assert(host_path_size > 0);
 
-  while (*path) {
+  while (*path && host_path < end) {
     switch (*path) {
-    case '$':
-      strcpy(host_path, HOSTFS_ROOT);
-      host_path += strlen(host_path);
+    case '$': {
+      size_t avail = (size_t) (end - host_path);
+      size_t copy = MIN(strlen(HOSTFS_ROOT), avail);
+      memcpy(host_path, HOSTFS_ROOT, copy);
+      host_path += copy;
       break;
+    }
     case '.':
       *host_path++ = '/';
       break;
@@ -408,14 +431,20 @@ path_construct(const char *old_path, const char *ro_path,
 {
   const char *ro_leaf;
   char *new_suffix;
+  size_t used;
 
   assert(old_path);
   assert(ro_path);
   assert(new_path);
+  assert(len > 0);
 
-  /* TODO Ensure buffer safety is observed */
-
-  /* Start by basing new Host path on the old one */
+  /* Start by basing new Host path on the old one. Bail if it does not fit
+     the destination buffer rather than overrunning it. */
+  if (strlen(old_path) >= len) {
+    rpclog("HostFS: path_construct: host path too long - ignoring\n");
+    new_path[0] = '\0';
+    return;
+  }
   strcpy(new_path, old_path);
 
   /* Find the leaf of the RISC OS path */
@@ -440,17 +469,24 @@ path_construct(const char *old_path, const char *ro_path,
     } else {
       /* No slash currently in Host path, but we need one */
       /* New leaf is then appended */
+      if (strlen(new_path) + 2 > len) {
+        rpclog("HostFS: path_construct: no room for separator - ignoring\n");
+        new_path[0] = '\0';
+        return;
+      }
       strcat(new_path, "/");
       new_leaf = new_path + strlen(new_path);
     }
 
-    /* Place new leaf */
-    riscos_path_to_host(ro_leaf, new_leaf);
+    /* Place new leaf (bounded to the space remaining in new_path) */
+    used = (size_t) (new_leaf - new_path);
+    riscos_path_to_host(ro_leaf, new_leaf, len - used);
   }
 
   /* Calculate where to place new comma suffix */
   /* New suffix appended onto existing path */
   new_suffix = new_path + strlen(new_path);
+  used = (size_t) (new_suffix - new_path);
 
   if ((load & 0xfff00000u) == 0xfff00000u) {
     ARMword filetype = (load >> 8) & 0xfff;
@@ -459,11 +495,11 @@ path_construct(const char *old_path, const char *ro_path,
 
     /* Don't set for default filetype */
     if (filetype != DEFAULT_FILE_TYPE) {
-      sprintf(new_suffix, ",%03x", filetype);
+      snprintf(new_suffix, len - used, ",%03x", filetype);
     }
   } else {
     /* File has load and exec addresses */
-    sprintf(new_suffix, ",%x-%x", load, exec);
+    snprintf(new_suffix, len - used, ",%x-%x", load, exec);
   }
 }
 
@@ -918,14 +954,39 @@ hostfs_open(ARMul_State *state)
   state->Reg[4] = 0; /* Space allocated to file */
 }
 
+/**
+ * Validate a guest-supplied HostFS file handle and return its open FILE*.
+ *
+ * The guest fully controls Reg[1]. A value outside the valid range
+ * (1..MAX_OPEN_FILES) or referring to a slot that is not currently open must
+ * never be used to index open_file[]: doing so would read out of bounds (or a
+ * stale entry) and dereference an attacker-influenced pointer.
+ *
+ * @return The open FILE*, or NULL if the handle is invalid.
+ */
+static FILE *
+hostfs_get_open_file(ARMword handle)
+{
+  if (handle < 1 || handle > MAX_OPEN_FILES) {
+    return NULL;
+  }
+  return open_file[handle];
+}
+
 static void
 hostfs_getbytes(ARMul_State *state)
 {
-  FILE *f = open_file[state->Reg[1]];
+  FILE *f = hostfs_get_open_file(state->Reg[1]);
   ARMword ptr = state->Reg[2];
   ARMword i;
 
   assert(state);
+
+  if (f == NULL) {
+    rpclog("HostFS: GetBytes with invalid file handle %u - ignoring\n",
+           state->Reg[1]);
+    return;
+  }
 
   dbug_hostfs("GetBytes\n");
   dbug_hostfs("\tr1 = %u (our file handle)\n", state->Reg[1]);
@@ -948,11 +1009,17 @@ hostfs_getbytes(ARMul_State *state)
 static void
 hostfs_putbytes(ARMul_State *state)
 {
-  FILE *f = open_file[state->Reg[1]];
+  FILE *f = hostfs_get_open_file(state->Reg[1]);
   ARMword ptr = state->Reg[2];
   ARMword i;
 
   assert(state);
+
+  if (f == NULL) {
+    rpclog("HostFS: PutBytes with invalid file handle %u - ignoring\n",
+           state->Reg[1]);
+    return;
+  }
 
   dbug_hostfs("PutBytes\n");
   dbug_hostfs("\tr1 = %u (our file handle)\n", state->Reg[1]);
@@ -981,7 +1048,12 @@ hostfs_args_3_write_file_extent(ARMul_State *state)
 
   assert(state);
 
-  f = open_file[state->Reg[1]];
+  f = hostfs_get_open_file(state->Reg[1]);
+  if (f == NULL) {
+    rpclog("HostFS: Write file extent with invalid file handle %u - ignoring\n",
+           state->Reg[1]);
+    return;
+  }
 
   dbug_hostfs("\tWrite file extent\n");
   dbug_hostfs("\tr1 = %u (our file handle)\n", state->Reg[1]);
@@ -1018,7 +1090,12 @@ hostfs_args_7_ensure_file_size(ARMul_State *state)
 
   assert(state);
 
-  f = open_file[state->Reg[1]];
+  f = hostfs_get_open_file(state->Reg[1]);
+  if (f == NULL) {
+    rpclog("HostFS: Ensure file size with invalid file handle %u - ignoring\n",
+           state->Reg[1]);
+    return;
+  }
 
   dbug_hostfs("\tEnsure file size\n");
   dbug_hostfs("\tr1 = %u (our file handle)\n", state->Reg[1]);
@@ -1038,7 +1115,12 @@ hostfs_args_8_write_zeros(ARMul_State *state)
 
   assert(state);
 
-  f = open_file[state->Reg[1]];
+  f = hostfs_get_open_file(state->Reg[1]);
+  if (f == NULL) {
+    rpclog("HostFS: Write zeros with invalid file handle %u - ignoring\n",
+           state->Reg[1]);
+    return;
+  }
 
   dbug_hostfs("\tWrite zeros to file\n");
   dbug_hostfs("\tr1 = %u (our file handle)\n", state->Reg[1]);
@@ -1105,7 +1187,12 @@ hostfs_close(ARMul_State *state)
 
   assert(state);
 
-  f = open_file[state->Reg[1]];
+  f = hostfs_get_open_file(state->Reg[1]);
+  if (f == NULL) {
+    rpclog("HostFS: Close with invalid file handle %u - ignoring\n",
+           state->Reg[1]);
+    return;
+  }
   load = state->Reg[2];
   exec = state->Reg[3];
 
@@ -1461,11 +1548,17 @@ hostfs_file_8_create_dir(ARMul_State *state)
     /* Location of leaf in supplied RISC OS path */
     ro_leaf = dot + 1;
 
+    if (strlen(host_pathname) + 2 > sizeof(host_pathname)) {
+      rpclog("HostFS: CreateDir: host path too long - ignoring\n");
+      return;
+    }
     strcat(host_pathname, "/");
     new_leaf = host_pathname + strlen(host_pathname);
 
-    /* Place new leaf */
-    riscos_path_to_host(ro_leaf, new_leaf);
+    /* Place new leaf (bounded to the space remaining in host_pathname) */
+    riscos_path_to_host(ro_leaf, new_leaf,
+                        sizeof(host_pathname)
+                          - (size_t) (new_leaf - host_pathname));
   }
 
   dbug_hostfs("\tHOST_PATHNAME = %s\n", host_pathname);
