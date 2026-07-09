@@ -47,6 +47,7 @@
 #include "podules.h"
 #include "fdc.h"
 #include "hostfs.h"
+#include "hostcmd.h"
 #include "disc.h"
 #include "disc_adf.h"
 #include "disc_hfe.h"
@@ -101,6 +102,8 @@ Config config = {
 	0,			/* vnc_enabled */
 	5900,			/* vnc_port */
 	"",			/* vnc_password */
+	1,			/* hostcmd_enabled (ON by default) */
+	"",			/* hostcmd_socket (empty => <datadir>hostcmd.sock) */
 };
 
 /* Performance measuring variables */
@@ -737,6 +740,7 @@ resetrpc(void)
         podules_reset();
         podulerom_reset(); // must be called after podules_reset()
         hostfs_reset();
+        hostcmd_reset();
 
 
 #ifdef RPCEMU_NETWORKING
@@ -843,6 +847,7 @@ void
 rpcemu_start(void)
 {
 	hostfs_init();
+	hostcmd_init();
 	parallel_bus_init();
 	serial_bus_init();
 	printer_init();
@@ -940,6 +945,7 @@ execrpcemu(void)
 
 	printer_poll();
 	serial_modem_poll();
+	hostcmd_poll();
 }
 
 /**
@@ -988,6 +994,7 @@ rpcemu_idle(void)
 			updateirqs();
 		}
 		serial_modem_poll();
+		hostcmd_poll();
 		/* Sleep if no interrupts pending */
 		if (!arm.event) {
 #ifdef RPCEMU_WIN
@@ -1011,6 +1018,7 @@ rpcemu_idle(void)
 			}
 			printer_poll();
 			serial_modem_poll();
+			hostcmd_poll();
 			rpcemu_idle_process_events();
 		}
 	}
@@ -1024,6 +1032,7 @@ rpcemu_idle(void)
 void
 endrpcemu(void)
 {
+        hostcmd_close();
         sound_thread_close();
         closevideo();
         iomd_end();

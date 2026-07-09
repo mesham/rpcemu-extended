@@ -21,6 +21,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 - **Pixel Perfect scaling** — optional integer scaling for sharp pixels (*Settings → Pixel Perfect*).
 - **Built-in VNC server** — remote desktop access from any VNC client.
 - **Headless mode** — run a machine with no GUI window, accessed entirely over VNC (`--headless --machine <name>`). Genuinely display-less: needs no X11/Wayland, so it runs on a headless server. See [Headless mode](#headless-mode).
+- **HostCmd — drive the RISC OS command line from the host** — run guest commands from the host over a local socket and stream their output back, with the return code. Edit on the host (via HostFS), compile on the guest (`rpcemu-run -- cc -c hello`), or open an interactive RISC OS shell (`rpcemu-shell`). Ideal for IDE/LLM-driven development. See [docs/hostcmd.md](docs/hostcmd.md).
 - **Parallel port** — log raw output to a file, or a virtual printer that captures jobs to `.prn` files with optional in-process PDF conversion via Ghostscript.
 - **Serial port** — log to file, or a TCP "modem" that dials real telnet BBSes (`ATDT host:port`) with a telnet client layer and 8-bit-clean X/Y/ZMODEM transfers. See [docs/peripherals.md](docs/peripherals.md).
 - **Machine Inspector** — live CPU, disassembly, memory, peripheral, and debugger views with auto-refresh.
@@ -67,6 +68,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `docs/dynarec.md` | ARM dynamic recompiler (build, behaviour, limitations) |
 | `docs/peripherals.md` | Serial and parallel ports (file logging, TCP modem, printer) |
 | `docs/podules.md` | Expansion cards (podules): bundled devices, configuration, plugin ABI |
+| `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
 | `setup-build-env.sh` | Install build dependencies (Debian/Ubuntu) |
 
 ### Where your data lives
@@ -310,6 +312,7 @@ how the JIT is built and when it falls back to interpretation.
 - Pixel Perfect integer scaling
 - Built-in VNC server
 - Headless mode for display-less servers (run a machine over VNC with no GUI)
+- HostCmd: drive the guest RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) for edit-on-host/compile-on-guest workflows
 - Virtual printer with optional Ghostscript PDF conversion
 - Serial log-to-file and a real telnet TCP modem (dial BBSes, 8-bit-clean transfers)
 - Machine Inspector with disassembly and memory browser

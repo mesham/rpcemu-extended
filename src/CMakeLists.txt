@@ -13,6 +13,7 @@ set(RPCEMU_CORE_SOURCES
     fpa.c
     hostfs.c
     hostfs-unix.c
+    hostcmd.c
     ide.c
     iomd.c
     keyboard.c
@@ -177,3 +178,6 @@ enable_language(CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_subdirectory(gui)
+
+# Host-side HostCmd client (rpcemu-run / rpcemu-shell).
+add_subdirectory(tools)

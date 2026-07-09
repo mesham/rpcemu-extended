@@ -206,6 +206,8 @@ typedef struct {
 	int vnc_enabled;	/**< Enable the built-in VNC server */
 	int vnc_port;		/**< Port for the VNC server (default 5900) */
 	char vnc_password[64];	/**< Password for VNC authentication (empty = no auth) */
+	int hostcmd_enabled;	/**< Enable the HostCmd control socket (host drives the RISC OS CLI) */
+	char hostcmd_socket[512];	/**< Socket spec: empty = <datadir>hostcmd.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
 } Config;
 
 extern Config config;

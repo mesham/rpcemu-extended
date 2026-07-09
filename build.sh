@@ -208,6 +208,15 @@ stage_linux_release() {
 	chmod +x "$release_binary"
 	cp -f "$release_binary" "$binary_name"
 
+	# HostCmd host-side client (rpcemu-run + rpcemu-shell symlink). These let
+	# the host drive the guest RISC OS command line; ship them alongside the
+	# emulator binary. See docs/hostcmd.md.
+	if [ -f build/bin/rpcemu-run ]; then
+		cp -f build/bin/rpcemu-run "$LINUX_RELEASE/rpcemu-run"
+		chmod +x "$LINUX_RELEASE/rpcemu-run"
+		ln -sf rpcemu-run "$LINUX_RELEASE/rpcemu-shell"
+	fi
+
 	cat > "$LINUX_RELEASE/BUILDINFO.txt" <<EOF
 RPCEmu (Spork Edition) $VERSION
 Built: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
@@ -243,6 +252,17 @@ build_podules() {
 		make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
 		cp -f hostfs,ffa hostfsfiler,ffa "$SCRIPT_DIR/poduleroms/"
 	)
+
+	local hostcmd_dir="riscos-progs/HostCmd"
+	if [ -d "$hostcmd_dir" ]; then
+		echo "Building HostCmd podule ROM..."
+		(
+			cd "$hostcmd_dir"
+			make clean
+			make AS=arm-linux-gnueabi-as LD=arm-linux-gnueabi-ld OBJCOPY=arm-linux-gnueabi-objcopy
+			cp -f hostcmd,ffa "$SCRIPT_DIR/poduleroms/"
+		)
+	fi
 	echo "✓ Podule ROMs copied to poduleroms/"
 }
 
