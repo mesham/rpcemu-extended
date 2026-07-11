@@ -170,6 +170,34 @@ gen_x86_mov_stack_reg32(int x86reg, int offset)
 	}
 }
 
+/**
+ * Emit a call to a C helper from generated code.
+ *
+ * The generated code stages call arguments in the System V argument registers
+ * (%edi, %esi, %edx for args 1-3, of which there are never more than three).
+ * On Linux that is the target ABI, so the call is emitted directly. On Windows
+ * the x64 ABI differs: arguments go in %ecx/%edx/%r8, and the caller must
+ * reserve 32 bytes of shadow space. Translate the registers and reserve the
+ * shadow space here so every call site (memory helpers, LDM/STM helpers, and
+ * the interpreter-op fallbacks in generatecall) is handled in one place.
+ * %ecx/%edx/%r8 are caller-saved scratch in both ABIs, so clobbering them is
+ * safe; lower-arity callees simply ignore the surplus registers.
+ */
+static inline void
+gen_call_c_function(const void *addr)
+{
+#ifdef _WIN32
+	addbyte(0x41); addbyte(0x89); addbyte(0xd0); // MOV %edx,%r8d  (arg3)
+	addbyte(0x89); addbyte(0xf2);                // MOV %esi,%edx  (arg2)
+	addbyte(0x89); addbyte(0xf9);                // MOV %edi,%ecx  (arg1)
+	addbyte(0x48); addbyte(0x83); addbyte(0xec); addbyte(0x20); // SUB $32,%rsp
+	gen_x86_call(addr);
+	addbyte(0x48); addbyte(0x83); addbyte(0xc4); addbyte(0x20); // ADD $32,%rsp
+#else
+	gen_x86_call(addr);
+#endif
+}
+
 void
 initcodeblocks(void)
 {
@@ -249,6 +277,12 @@ initcodeblock(uint32_t l)
 	addbyte(0x45); addbyte(0x89); addbyte(0x67); addbyte(15<<2); // MOV %r12d,R15
 	addbyte(0x48); addbyte(0x83); addbyte(0xc4); addbyte(8); // ADD $8,%rsp
 	// Restore registers
+#ifdef _WIN32
+	// %rsi/%rdi are callee-saved under the Windows x64 ABI (caller-saved on
+	// System V); restore them in reverse push order (see prologue).
+	gen_x86_pop_reg(RSI);
+	gen_x86_pop_reg(RDI);
+#endif
 	gen_x86_pop_reg(RBX);
 	gen_x86_pop_reg(R12);
 	gen_x86_pop_reg(R13);
@@ -268,6 +302,13 @@ initcodeblock(uint32_t l)
 	gen_x86_push_reg(R13);
 	gen_x86_push_reg(R12);
 	gen_x86_push_reg(RBX);
+#ifdef _WIN32
+	// %rsi/%rdi are callee-saved under the Windows x64 ABI but used as scratch
+	// by generated code, so preserve them. Two extra 8-byte pushes keep the
+	// 16-byte alignment below unchanged.
+	gen_x86_push_reg(RDI);
+	gen_x86_push_reg(RSI);
+#endif
 	// Align stack to a multiple of 16 bytes - required by AMD64 ABI
 	addbyte(0x48); addbyte(0x83); addbyte(0xec); addbyte(8); // SUB $8,%rsp
 
@@ -510,7 +551,7 @@ genldr(void)
 	jump_nextbit = gen_x86_jump_forward(CC_ALWAYS);
 	// .notinbuffer
 	gen_x86_jump_here(jump_notinbuffer);
-	gen_x86_call(readmemfl);
+	gen_call_c_function(readmemfl);
 	if (arm.abort_base_restored) {
 		gen_test_armirq();
 	}
@@ -542,7 +583,7 @@ genldrb(void)
 	jump_nextbit = gen_x86_jump_forward(CC_ALWAYS);
 	// .notinbuffer
 	gen_x86_jump_here(jump_notinbuffer);
-	gen_x86_call(readmemfb);
+	gen_call_c_function(readmemfb);
 	if (arm.abort_base_restored) {
 		gen_test_armirq();
 	}
@@ -571,7 +612,7 @@ genstr(void)
 	jump_nextbit = gen_x86_jump_forward(CC_ALWAYS);
 	// .notinbuffer
 	gen_x86_jump_here(jump_notinbuffer);
-	gen_x86_call(writememfl);
+	gen_call_c_function(writememfl);
 	if (arm.abort_base_restored) {
 		gen_test_armirq();
 	}
@@ -599,7 +640,7 @@ genstrb(void)
 	jump_nextbit = gen_x86_jump_forward(CC_ALWAYS);
 	// .notinbuffer
 	gen_x86_jump_here(jump_notinbuffer);
-	gen_x86_call(writememfb);
+	gen_call_c_function(writememfb);
 	if (arm.abort_base_restored) {
 		gen_test_armirq();
 	}
@@ -673,7 +714,7 @@ gen_call_ldm_stm_helper(uint32_t opcode, const void *helper_fn)
 	addbyte(0xbf); addlong(opcode); // MOV $opcode,%edi (argument 1)
 
 	addbyte(0x45); addbyte(0x89); addbyte(0x67); addbyte(15<<2); // MOV %r12d,R15
-	gen_x86_call(helper_fn);
+	gen_call_c_function(helper_fn);
 	addbyte(0x45); addbyte(0x8b); addbyte(0x67); addbyte(15<<2); // MOV R15,%r12d
 
 	gen_test_armirq();
@@ -1658,7 +1699,7 @@ generatecall(OpFn addr, uint32_t opcode, uint32_t *pcpsr)
 
 	addbyte(0xbf); addlong(opcode); // MOV $opcode,%edi
 	addbyte(0x45); addbyte(0x89); addbyte(0x67); addbyte(15<<2); // MOV %r12d,R15
-	gen_x86_call(addr);
+	gen_call_c_function(addr);
 	addbyte(0x45); addbyte(0x8b); addbyte(0x67); addbyte(15<<2); // MOV R15,%r12d
 
 	if (!flaglookup[opcode >> 28][(*pcpsr) >> 28] && (opcode & 0xe000000) == 0xa000000) {

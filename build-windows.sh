@@ -24,10 +24,10 @@ BUILD_DIR=build-win
 WIN_ARCH=amd64
 WIN_RELEASE="releases/windows/$WIN_ARCH"
 MAKE_ZIP=false
-# The x86-64 dynarec is System-V-ABI-only and does not yet work under the
-# Windows x64 ABI, so the Windows build uses the interpreter by default (correct,
-# just slower). Pass --dynarec once the JIT ABI port lands.
-INTERPRETER=true
+# The x86-64 dynarec now supports the Windows x64 ABI (codegen_amd64.c), so the
+# Windows build uses the recompiler by default for full-speed emulation. Pass
+# --interpreter to force the (slower, ABI-agnostic) interpreter build.
+INTERPRETER=false
 
 for arg in "$@"; do
 	case "$arg" in

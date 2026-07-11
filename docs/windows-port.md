@@ -133,16 +133,25 @@ Linux continues past the abort to `HostFS: Registration request accepted`;
 Windows logs nothing after the abort. The fc008b40/fault_addr=0x8000 data abort
 itself is the known-harmless ROM app-space probe.
 
-**Resolution (interim): Windows ships the INTERPRETER.** `arm.c`+`codegen_null.c`
-are pure C, ABI-agnostic, cross-compile clean, and boot RISC OS correctly (same
-as the arm64 Linux release). `build-windows.sh` builds the interpreter by default
-(`--dynarec` opt-in for later); binary is `rpcemu-interpreter.exe`.
+**Resolution: Windows now ships the RECOMPILER (full-speed dynarec).** Initially
+1.1.5 shipped the interpreter as a stop-gap; the dynarec was ported to the Windows
+x64 ABI in 1.1.7. `build-windows.sh` builds the recompiler by default
+(`--interpreter` still available); binary is `rpcemu-recompiler.exe`.
 
-**Dynarec on Windows (remaining full-speed parity work):** the JIT calls only ~6
-helpers, so the tractable fix is `__attribute__((sysv_abi))` on those helpers +
-the JIT block entry (so the whole JIT world stays SysV), gated on Windows — NOT a
-full codegen rewrite. Needs on-Windows (or wine) testing. Verify the ~6 helpers
-aren't also called from MS-ABI C code in a dynarec build before annotating.
+**Dynarec Windows x64 ABI port (done, 1.1.7).** The JIT emitted System-V calls
+(args RDI/RSI/RDX); Windows needs RCX/RDX/R8 + 32-byte shadow space, and RSI/RDI
+are callee-saved there. All JIT→C calls funnel through `gen_x86_call`, so the fix
+is localized to `codegen_amd64.c`: (1) a `gen_call_c_function()` wrapper that, on
+`_WIN32`, shuffles the staged args (`edi→ecx, esi→edx, edx→r8`) and reserves 32
+bytes of shadow space around the call — used by all six call sites (mem helpers,
+LDM/STM helpers, and the interpreter-op fallbacks via `generatecall`); (2) the
+block prologue/epilogue also push/pop RSI/RDI on `_WIN32` (2 extra pushes keep the
+16-byte alignment unchanged). No C-side changes and no `sysv_abi` attributes (the
+~256 OpFn ops made that route unwieldy). R8/R9/RCX/RDX are free scratch in the JIT
+so the shuffle is safe; max 3 args; returns already come back in EAX on both ABIs.
+Verified under wine: RISC OS boots and runs at ~175-182 MIPS vs the interpreter's
+~60 (native Windows faster still). Linux dynarec unaffected (`_WIN32`-guarded;
+`jit_flags` differential test still passes).
 
 **Also fixed this session:** wxMSW `wx.rc` (cursors/manifest) now compiled in;
 `wxInitAllImageHandlers()` added. Keyboard works (X11 raw-path gated to wxGTK; K/L
@@ -161,10 +170,10 @@ drives the window/taskbar icon (both), the Windows `.exe` icon (compiled-in
 and is wired into the `release` job (`needs` + `upload/**/*.zip`), so a `vX.Y.Z`
 tag publishes the Windows zip alongside the Linux `.deb`/`.tar.gz`.
 
-**Still to do:** dynarec Windows-ABI port (above, for full-speed parity); §5 M4
-parity (full Windows scancode→PS/2 table + relative-mouse capture); optionally
-harden `PostVideoUpdate` to be fully async (a snapshot-during-reset could still
-deadlock the sync video path).
+**Still to do:** §5 M4 parity (full Windows scancode→PS/2 table + relative-mouse
+capture); optionally harden `PostVideoUpdate` to be fully async (a
+snapshot-during-reset could still deadlock the sync video path). The dynarec port
+(full-speed emulation) is DONE as of 1.1.7.
 
 New/changed files: `src/socket-compat.h`, `src/rpcemu-win.h`, `src/network-null.c`,
 `cmake/mingw-w64-x86_64.cmake` (new); `CMakeLists.txt`, `src/CMakeLists.txt`,

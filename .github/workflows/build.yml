@@ -78,8 +78,8 @@ jobs:
 
   windows-amd64:
     # Native Windows build with MinGW-w64 via MSYS2 (MINGW64). Ships the
-    # interpreter (the x86 dynarec is System-V-ABI-only; a Windows x64 ABI port
-    # is future work). Uses build-windows.sh (build.sh is apt/.deb-only).
+    # recompiler (full-speed dynarec; the JIT supports the Windows x64 ABI).
+    # Uses build-windows.sh (build.sh is apt/.deb-only).
     runs-on: windows-latest
     defaults:
       run:
@@ -109,9 +109,9 @@ jobs:
       - name: Smoke test binary (PE executable)
         run: |
           ls -la releases/windows/amd64/
-          # Windows ships the interpreter until the dynarec is ported to the
-          # Windows x64 ABI (the JIT is currently System-V-only).
-          file releases/windows/amd64/rpcemu-interpreter.exe | grep -i 'PE32'
+          # Windows ships the recompiler (full-speed dynarec; the JIT now
+          # supports the Windows x64 ABI).
+          file releases/windows/amd64/rpcemu-recompiler.exe | grep -i 'PE32'
 
       - name: Upload Windows amd64 release
         uses: actions/upload-artifact@v4
