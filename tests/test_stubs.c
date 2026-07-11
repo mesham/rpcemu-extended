@@ -24,6 +24,24 @@ fatal(const char *format, ...)
 	exit(2);
 }
 
+/*
+ * The core's non-fatal error reporter (the GUI provides the real one). On
+ * glibc/Linux this previously resolved by accident to libc's error(3) GNU
+ * extension - a different signature - so no stub was needed; macOS/BSD has no
+ * such function, so define it explicitly. Never exercised by the flag tester.
+ */
+void
+error(const char *format, ...)
+{
+	va_list ap;
+
+	fputs("test stub: error() called: ", stderr);
+	va_start(ap, format);
+	vfprintf(stderr, format, ap);
+	va_end(ap);
+	fputc('\n', stderr);
+}
+
 void rpcemu_log_platform(void) {}
 
 /* Config */
