@@ -27,7 +27,11 @@ if(RPCEMU_ENABLE_WARNINGS)
     # These are GCC/Clang spellings; MinGW-w64 accepts them unchanged. Guard
     # against a hypothetical MSVC configure anyway.
     if(NOT MSVC)
-        add_compile_options(-Wall -Wextra -Werror=switch -fno-common)
+        # -Werror=implicit-function-declaration: catch missing declarations on
+        # all toolchains. GCC 14 (e.g. current MSYS2) already errors on these by
+        # default; making it explicit means older GCC/Clang catch them too.
+        add_compile_options(-Wall -Wextra -Werror=switch
+                            -Werror=implicit-function-declaration -fno-common)
     endif()
 endif()
 
