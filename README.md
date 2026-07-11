@@ -1,10 +1,10 @@
 # RPCEmu – Spork Edition
 
 An extended fork of **[RPCEmu](http://www.marutan.net/rpcemu/)**, the open-source
-emulator for Acorn Risc PC and A7000 machines. This edition targets **Linux** with a
-wxWidgets front-end, multi-machine configuration, integrated debugger and machine
-inspector, Access/ShareFS networking, full FPA emulation, and modern CMake-based
-build tooling.
+emulator for Acorn Risc PC and A7000 machines. This edition runs on **Linux and
+Windows** with a wxWidgets front-end, multi-machine configuration, integrated
+debugger and machine inspector, Access/ShareFS networking, full FPA emulation, and
+modern CMake-based build tooling.
 
 Licensed under the **GNU GPL v2** — see `COPYING`.
 
@@ -12,6 +12,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 
 ## Highlights
 
+- **Cross-platform** — runs on **Linux** (amd64 + arm64) and **Windows** (amd64). The x86-64 dynamic recompiler works on both, so Windows gets full-speed emulation too. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
 - **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
 - **Dual HostFS drives** — per-machine **HostFS** plus a common **Shared** drive (`shared/`) visible to all machines.
@@ -89,10 +90,16 @@ everything self-contained in its own folder.
 
 ### Supported systems
 
-The prebuilt releases are **amd64** (x86, dynarec) and **arm64** (e.g. Raspberry Pi —
-interpreter build, as there is no ARM dynarec yet) Linux packages, built on **Ubuntu
-24.04 LTS**. Because they are dynamically linked, they run on distributions whose system
-libraries are that version or newer. In practice that means:
+Each GitHub release ships prebuilt packages for three targets:
+
+| Package | Platform | CPU core |
+| --- | --- | --- |
+| `rpcemu_*_amd64.deb` / `_linux_amd64.tar.gz` | Linux x86-64 | Recompiler (full speed) |
+| `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (no ARM dynarec yet) |
+| `rpcemu_*_windows_amd64.zip` | Windows x64 (10/11) | Recompiler (full speed) |
+
+**Linux** packages are built on **Ubuntu 24.04 LTS**; being dynamically linked, they run
+on distributions whose system libraries are that version or newer:
 
 | Distribution | Runs the prebuilt release? |
 | --- | --- |
@@ -102,12 +109,15 @@ libraries are that version or newer. In practice that means:
 | arm64 / Raspberry Pi (Ubuntu 24.04+ base) | ✅ Yes — `arm64` package (interpreter; slower than x86) |
 | Ubuntu 22.04 LTS, Debian 12 (Bookworm) and older | ❌ No — system libraries too old |
 
-Minimum requirements: **glibc ≥ 2.34**, **libstdc++ from GCC 13.2+** (`GLIBCXX_3.4.32`),
-and **wxWidgets 3.2**. These ship as standard on Ubuntu 24.04-era distributions.
+Linux minimum requirements: **glibc ≥ 2.34**, **libstdc++ from GCC 13.2+**
+(`GLIBCXX_3.4.32`), and **wxWidgets 3.2** — standard on Ubuntu 24.04-era distributions.
+On an older/different distribution (or for arm64), **build from source** instead:
+`./setup-build-env.sh` then `./build.sh`. See [COMPILE.md](COMPILE.md).
 
-On an older or different distribution (or for arm64), **build from source** instead —
-`./setup-build-env.sh` then `./build.sh` adapts to your system's libraries. See
-[COMPILE.md](COMPILE.md).
+**Windows**: extract the `windows_amd64.zip` anywhere and run `rpcemu-recompiler.exe`.
+The MinGW/SDL2/libvncserver runtime DLLs are bundled in the zip, so there is nothing
+else to install. Windows 10/11 (x64). Built with MinGW-w64 via MSYS2 — see
+[Build for Windows](#build-for-windows) to build it yourself.
 
 ### Install the `.deb`
 
@@ -137,6 +147,22 @@ The portable `.tar.gz` instead bundles everything in one folder; run
 ```
 
 See [COMPILE.md](COMPILE.md) for manual CMake, GhostPDL, and podule ROM rebuilds.
+
+### Build for Windows
+
+`build-windows.sh` builds the Windows package to `releases/windows/amd64/` and is
+dual-mode:
+
+- **Native, on Windows** — from an **MSYS2 MINGW64** shell (install the
+  `mingw-w64-x86_64-` toolchain, cmake, wxwidgets3.2-msw, SDL2, libvncserver), just
+  run `./build-windows.sh --zip`.
+- **Cross-compile, from Linux** — run `./setup-cross-build-env.sh` once (builds
+  wxWidgets/SDL2/libvncserver for the mingw target into the sysroot), then
+  `./build-windows.sh --zip`.
+
+It defaults to the recompiler (`rpcemu-recompiler.exe`); pass `--interpreter` for the
+interpreter build. Runtime DLLs are bundled into the staged folder automatically. This
+is exactly what the `windows-amd64` CI job runs.
 
 ### Run
 
@@ -322,7 +348,7 @@ how the JIT is built and when it falls back to interpretation.
 - Machine Inspector with disassembly and memory browser
 - Dynarec debugger hooks for consistent breakpoint/watchpoint behaviour
 - Robustness & memory-safety hardening: bounds-checked HFE/ADF disc-image and HostFS input handling, FPA faults raised as undefined instructions rather than aborting the emulator, and a fixed use-after-free on GUI shutdown
-- CMake build system for Linux (amd64 and arm64)
+- CMake build system, cross-platform: Linux (amd64 and arm64) and Windows (amd64, MinGW-w64)
 
 ---
 
@@ -333,7 +359,7 @@ how the JIT is built and when it falls back to interpretation.
 | `error while loading shared libraries: …` (tarball) | Run `./setup-runtime-env.sh` to install the runtime libraries (wxWidgets, SDL2, libvncserver, Ghostscript) |
 | Window does not appear / configs not found | Run from the project root or a staged release directory |
 | No audio | Ensure PulseAudio or PipeWire is running (SDL2) |
-| No network | Select NAT in machine settings; SLiRP is always compiled in on Linux |
+| No network | Select NAT in machine settings; SLiRP/NAT is always compiled in (Linux and Windows) |
 | ROM not found | Place ROM files in `roms/<subdir>/` and select the folder in machine settings |
 | Machine data not persisting | Check that `machines/<name>/` exists and is writable |
 | VNC option missing | Rebuild with `libvncserver-dev` installed |
