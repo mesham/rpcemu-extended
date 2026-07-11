@@ -39,6 +39,7 @@
 #include <sys/time.h>
 
 #include "rpcemu.h"
+#include "rpcemu-win.h"
 #include "printer.h"
 #include "parallel.h"
 #include "print_convert.h"

@@ -23,6 +23,7 @@
 #include <sys/stat.h>
 
 #include "rpcemu.h"
+#include "rpcemu-win.h"
 
 #define rpcemu_mkdir_one(path) mkdir(path, 0777)
 

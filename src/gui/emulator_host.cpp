@@ -618,6 +618,7 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		iso_open(config.isoname);
 		break;
 	case EmuCommandType::CdromIoctl:
+#if defined(__linux__)
 		if (!config.cdromenabled) {
 			config.cdromenabled = 1;
 			config_save(&config);
@@ -625,6 +626,10 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		}
 		atapi->exit();
 		ioctl_init();
+#else
+		/* Real-drive CD-ROM (ioctl backend) is Linux-only; use an ISO image. */
+		rpclog("CD-ROM: real-drive access is not supported on this platform\n");
+#endif
 		break;
 	case EmuCommandType::MouseHack:
 		config.mousehackon ^= 1;

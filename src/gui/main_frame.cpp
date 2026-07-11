@@ -10,6 +10,8 @@
 
 #include <wx/filedlg.h>
 #include <wx/filename.h>
+#include <wx/icon.h>
+#include <wx/image.h>
 
 #include "about_dialog.h"
 #include "config_paths.h"
@@ -88,6 +90,21 @@ MainFrame::MainFrame()
 	config_deep_copy(&config_copy_, &config);
 	pconfig_copy = &config_copy_;
 	model_copy_ = machine.model;
+
+	// Window / taskbar / Alt-Tab icon (both platforms). Shipped in
+	// <resourcedir>/resources/rpcemu.png. On Windows the .exe file icon comes
+	// from the compiled-in .ico (see cmake/FindWxWidgets.cmake).
+	{
+		const wxString icon_path = wxString::FromUTF8(rpcemu_get_resourcedir()) +
+		    "resources" + wxFileName::GetPathSeparator() + "rpcemu.png";
+		wxImage icon_image;
+		if (wxFileExists(icon_path) &&
+		    icon_image.LoadFile(icon_path, wxBITMAP_TYPE_PNG)) {
+			wxIcon icon;
+			icon.CopyFromBitmap(wxBitmap(icon_image));
+			SetIcon(icon);
+		}
+	}
 
 	emulator_ = std::make_unique<EmulatorHost>(this);
 	nat_list_dialog_ = std::make_unique<NatListDialog>(this, emulator_.get());

@@ -28,6 +28,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* printf-style format checking for our logging helpers. On MinGW the default
+   "printf" archetype is ms_printf, which rejects C99 conversions like %zu/%ll;
+   __MINGW_PRINTF_FORMAT (defined by <stdio.h>) tracks the active CRT and is
+   gnu_printf when built with __USE_MINGW_ANSI_STDIO, matching runtime support. */
+#if defined(__MINGW_PRINTF_FORMAT)
+#  define RPCEMU_FORMAT_PRINTF(fmt, args) __attribute__((format(__MINGW_PRINTF_FORMAT, fmt, args)))
+#elif defined(__GNUC__)
+#  define RPCEMU_FORMAT_PRINTF(fmt, args) __attribute__((format(printf, fmt, args)))
+#else
+#  define RPCEMU_FORMAT_PRINTF(fmt, args)
+#endif
+
 #include "iomd.h"
 #include "superio.h"
 
@@ -45,8 +57,8 @@ extern "C" {
 #define VERSION RPCEMU_VERSION
 
 /* URLs used for the help menu weblinks */
-#define URL_MANUAL  "http://www.marutan.net/rpcemu/manual/"
-#define URL_WEBSITE "http://www.marutan.net/rpcemu/"
+#define URL_MANUAL  "https://github.com/andrewtimmins/rpcemu-extended/tree/main/docs"
+#define URL_WEBSITE "https://github.com/andrewtimmins/rpcemu-extended"
 
 #if !defined(_DEBUG) && !defined(NDEBUG)
 #define NDEBUG
@@ -57,7 +69,7 @@ extern "C" {
 # define __attribute__(x) /*NOTHING*/
 #endif
 
-#if defined __linux || defined __linux__
+#if defined __linux || defined __linux__ || defined _WIN32
 #define RPCEMU_NETWORKING
 #endif
 
@@ -283,9 +295,9 @@ typedef struct {
 } disk_info;
 
 extern void fatal(const char *format, ...)
-	__attribute__((format(printf, 1, 2))) __attribute__((noreturn));
+	RPCEMU_FORMAT_PRINTF(1, 2) __attribute__((noreturn));
 extern void error(const char *format, ...)
-	__attribute__((format(printf, 1, 2)));
+	RPCEMU_FORMAT_PRINTF(1, 2);
 
 extern int path_disk_info(const char *path, disk_info *d);
 
@@ -311,7 +323,7 @@ extern void resetrpc(void);
 extern void rpcemu_floppy_load(int drive, const char *filename);
 extern void rpcemu_floppy_eject(int drive);
 extern void rpclog(const char *format, ...)
-	__attribute__((format(printf, 1, 2)));
+	RPCEMU_FORMAT_PRINTF(1, 2);
 extern void rpcemu_model_changed(Model model);
 extern const char *rpcemu_file_get_extension(const char *filename);
 extern int rpcemu_config_is_reset_required(const Config *new_config, Model new_model);
@@ -384,13 +396,13 @@ extern Perf perf;
 
   void UNIMPLEMENTEDFL(const char *file, unsigned line,
                        const char *section, const char *format, ...)
-	__attribute__((format(printf, 4, 5)));
+	RPCEMU_FORMAT_PRINTF(4, 5);
 #else
   /* This function has no corresponding body, the compiler
      is clever enough to use it to swallow the arguments to
      debugging calls */
   void unimplemented_null(const char *section, const char *format, ...)
-	__attribute__((format(printf, 2, 3)));
+	RPCEMU_FORMAT_PRINTF(2, 3);
 
   #define UNIMPLEMENTED 1?(void)0:(void)unimplemented_null
 

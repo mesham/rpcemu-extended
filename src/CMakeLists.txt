@@ -6,7 +6,6 @@ set(RPCEMU_CORE_SOURCES
     print_convert.c
     peripheral_config.c
     cdrom-iso.c
-    cdrom-ioctl.c
     cmos.c
     cp15.c
     fdc.c
@@ -47,7 +46,6 @@ set(RPCEMU_CORE_SOURCES
     disc_adf.c
     disc_hfe.c
     disc_mfm_common.c
-    network-tun.c
     network.c
     network-nat.c
     broadcast_relay.c
@@ -83,6 +81,16 @@ else()
     list(APPEND RPCEMU_CORE_SOURCES arm.c codegen_null.c)
 endif()
 
+# Host-platform backends. Ethernet bridging / IP tunnelling (network-tun.c) go
+# through /dev/net/tun and the Linux CD-ROM ioctl backend (cdrom-ioctl.c) are
+# Linux-only. On Windows use the null network platform layer (NAT still works)
+# and the portable ISO-file CD-ROM backend (cdrom-iso.c, listed above).
+if(WIN32)
+    list(APPEND RPCEMU_CORE_SOURCES network-null.c)
+else()
+    list(APPEND RPCEMU_CORE_SOURCES network-tun.c cdrom-ioctl.c)
+endif()
+
 add_library(rpcemu_core STATIC ${RPCEMU_CORE_SOURCES})
 
 target_include_directories(rpcemu_core PUBLIC
@@ -104,6 +112,13 @@ target_compile_definitions(rpcemu_core PUBLIC
 target_compile_definitions(rpcemu_core PRIVATE _DEFAULT_SOURCE)
 target_compile_options(rpcemu_core PRIVATE -std=gnu11)
 
+# MinGW defaults printf/scanf to the MSVCRT implementations, which lack C99
+# conversions such as %zu and %lld. Select MinGW's ANSI-stdio implementations
+# (public: affects headers included by GUI/tools translation units too).
+if(WIN32)
+    target_compile_definitions(rpcemu_core PUBLIC __USE_MINGW_ANSI_STDIO=1)
+endif()
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     target_compile_definitions(rpcemu_core PUBLIC _DEBUG)
 endif()
@@ -113,6 +128,12 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "ppc|ppc64|powerpc")
 endif()
 
 target_link_libraries(rpcemu_core PUBLIC pthread ${CMAKE_DL_LIBS})
+
+# Windows: Winsock (control sockets, SLiRP NAT, TCP modem, broadcast relay) and
+# the IP Helper API (adapter enumeration in broadcast_relay.c).
+if(WIN32)
+    target_link_libraries(rpcemu_core PUBLIC ws2_32 iphlpapi)
+endif()
 
 # SDL2 is needed by the podule sound-output pathway (common/sound_out_sdl2.c).
 find_package(PkgConfig QUIET)

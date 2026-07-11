@@ -31,6 +31,8 @@ int blockend;
 #if defined __linux__ || defined __MACH__
 #	include <unistd.h>
 #	include <sys/mman.h>
+#elif defined _WIN32
+#	include <windows.h>
 #endif
 
 #include "rpcemu.h"
@@ -576,8 +578,40 @@ set_memory_executable(void *ptr, size_t len)
 		exit(1);
 	}
 }
+#elif defined _WIN32
+/**
+ * Grant executable privilege to a region of memory.
+ *
+ * The JIT buffer is a static, page-aligned array (W+X, no fault-based paging),
+ * so VirtualProtect flips its protection exactly like mprotect does on Linux.
+ *
+ * @param ptr Pointer to region of memory
+ * @param len Length of region of memory
+ */
+void
+set_memory_executable(void *ptr, size_t len)
+{
+	SYSTEM_INFO si;
+	DWORD page_size;
+	uintptr_t page_mask;
+	void *start;
+	uintptr_t end;
+	DWORD old_protect;
+
+	GetSystemInfo(&si);
+	page_size = si.dwPageSize;
+	page_mask = ~((uintptr_t) page_size - 1);
+
+	start = (void *) ((uintptr_t) ptr & page_mask);
+	end = ((uintptr_t) ptr + len + page_size - 1) & page_mask;
+	len = (size_t) (end - (uintptr_t) start);
+
+	if (!VirtualProtect(start, len, PAGE_EXECUTE_READWRITE, &old_protect)) {
+		fatal("VirtualProtect failed: error %lu", (unsigned long) GetLastError());
+	}
+}
 #else
-#error "RPCEmu dynarec requires Linux"
+#error "RPCEmu dynarec requires Linux or Windows"
 #endif
 
 #include "arm_dynarec_ops.h"

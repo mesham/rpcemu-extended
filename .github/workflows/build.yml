@@ -76,9 +76,55 @@ jobs:
             releases/linux/arm64/*.deb
           if-no-files-found: error
 
+  windows-amd64:
+    # Native Windows build with MinGW-w64 via MSYS2 (MINGW64). Ships the
+    # interpreter (the x86 dynarec is System-V-ABI-only; a Windows x64 ABI port
+    # is future work). Uses build-windows.sh (build.sh is apt/.deb-only).
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 / MinGW-w64
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            mingw-w64-x86_64-toolchain
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-pkgconf
+            mingw-w64-x86_64-wxwidgets3.2-msw
+            mingw-w64-x86_64-SDL2
+            mingw-w64-x86_64-libvncserver
+
+      - name: Build and stage release (native MSYS2)
+        run: |
+          chmod +x build-windows.sh
+          ./build-windows.sh --zip
+
+      - name: Smoke test binary (PE executable)
+        run: |
+          ls -la releases/windows/amd64/
+          # Windows ships the interpreter until the dynarec is ported to the
+          # Windows x64 ABI (the JIT is currently System-V-only).
+          file releases/windows/amd64/rpcemu-interpreter.exe | grep -i 'PE32'
+
+      - name: Upload Windows amd64 release
+        uses: actions/upload-artifact@v4
+        with:
+          name: rpcemu-windows-amd64
+          path: |
+            releases/windows/amd64/
+            releases/windows/*.zip
+          if-no-files-found: error
+
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    needs: [linux-amd64, linux-arm64]
+    needs: [linux-amd64, linux-arm64, windows-amd64]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -95,5 +141,6 @@ jobs:
           files: |
             upload/**/*.deb
             upload/**/*.tar.gz
+            upload/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

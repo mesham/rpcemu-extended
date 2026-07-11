@@ -31,6 +31,11 @@ bool RpcemuApp::OnInit()
 		return false;
 	}
 
+	// Register image handlers (PNG etc.). wxGTK pulls these in implicitly, but
+	// wxMSW does not; without this, PNG bitmaps (toolbar icons, app icon) fail
+	// to load.
+	wxInitAllImageHandlers();
+
 	InitRpcemuPaths();
 
 	ConfigSelectorDialog selector(nullptr);
@@ -47,7 +52,16 @@ bool RpcemuApp::OnInit()
 	SetTopWindow(frame);
 
 	rpcemu_start();
-	frame->StartEmulator();
+
+	// Start the emulator (which spawns the CPU and VIDC worker threads) only
+	// once the GUI event loop is actually running. If it starts here - before
+	// OnInit returns and the loop begins pumping - the VIDC thread can post its
+	// first frame while no event loop is servicing CallAfter. PostVideoUpdate()
+	// then blocks that thread (holding video_mutex) on a CallAfter that cannot
+	// run, deadlocking startup. Deferring via CallAfter guarantees the loop is
+	// live first. (Symptom: window opens with menus but no toolbar/display and
+	// "Not Responding"; timing-dependent, seen on Windows.)
+	frame->CallAfter([frame]() { frame->StartEmulator(); });
 	return true;
 }
 

@@ -3,6 +3,9 @@
 #include <algorithm>
 
 #include <wx/artprov.h>
+#include <wx/filefn.h>
+#include <wx/filename.h>
+#include <wx/image.h>
 #include <wx/statline.h>
 
 extern "C" {
@@ -69,6 +72,25 @@ CreateAboutIcon(int size)
 	return wxArtProvider::GetBitmap(wxART_INFORMATION, wxART_OTHER, wxSize(size, size));
 }
 
+// The application logo: prefer the shipped rpcemu.png, fall back to the
+// procedural placeholder if it can't be found/loaded.
+wxBitmap
+AboutLogo(int size)
+{
+	const wxString path = wxString::FromUTF8(rpcemu_get_resourcedir()) +
+	    "resources" + wxFileName::GetPathSeparator() + "rpcemu.png";
+	wxImage image;
+
+	if (wxFileExists(path) && image.LoadFile(path, wxBITMAP_TYPE_PNG)) {
+		if (image.GetWidth() != size || image.GetHeight() != size) {
+			image.Rescale(size, size, wxIMAGE_QUALITY_HIGH);
+		}
+		return wxBitmap(image);
+	}
+
+	return CreateAboutIcon(size);
+}
+
 wxString
 BuildDescription()
 {
@@ -122,7 +144,7 @@ void AboutDialog::BuildUi()
 	wxFont small_font = GetFont();
 	small_font.SetPointSize(std::max(8, small_font.GetPointSize() - 1));
 
-	auto *icon = new wxStaticBitmap(this, wxID_ANY, CreateAboutIcon(64));
+	auto *icon = new wxStaticBitmap(this, wxID_ANY, AboutLogo(64));
 
 	auto *title = new wxStaticText(this, wxID_ANY, "RPCEmu");
 	title->SetFont(title_font);
@@ -162,13 +184,13 @@ void AboutDialog::BuildUi()
 	build_info->SetFont(small_font);
 	build_info->SetForegroundColour(muted);
 
-	auto *manual_link = new wxButton(this, ID_ABOUT_MANUAL, "Online manual",
+	auto *manual_link = new wxButton(this, ID_ABOUT_MANUAL, "Documentation",
 	                                 wxDefaultPosition, wxDefaultSize,
 	                                 wxBORDER_NONE | wxBU_LEFT);
 	manual_link->SetForegroundColour(link);
 	manual_link->SetCursor(wxCursor(wxCURSOR_HAND));
 
-	auto *website_link = new wxButton(this, ID_ABOUT_WEBSITE, "Visit website",
+	auto *website_link = new wxButton(this, ID_ABOUT_WEBSITE, "GitHub repository",
 	                                  wxDefaultPosition, wxDefaultSize,
 	                                  wxBORDER_NONE | wxBU_LEFT);
 	website_link->SetForegroundColour(link);

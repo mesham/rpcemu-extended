@@ -10,6 +10,7 @@
 #include <wx/filename.h>
 #include <wx/log.h>
 #include <wx/stdpaths.h>
+#include <wx/utils.h>
 
 extern "C" {
 #include "rpcemu.h"
@@ -40,8 +41,12 @@ static bool HasConfigsDir(const wxString &base)
    ROMs, hostfs, logs). */
 static wxString UserDataRoot()
 {
-	const char *home = getenv("HOME");
-	const wxString base = (home && home[0] != '\0') ? wxString::FromUTF8(home) : wxString(".");
+	/* wxGetHomeDir() is cross-platform: $HOME on Unix, the user profile
+	   directory (%USERPROFILE%) on Windows. */
+	wxString base = wxGetHomeDir();
+	if (base.empty()) {
+		base = ".";
+	}
 	return NormalizeDirPath(base + wxFileName::GetPathSeparator() + "RPCEmu");
 }
 

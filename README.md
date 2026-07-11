@@ -59,7 +59,7 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `configs/` | Machine configuration files (`.cfg`, INI format) |
 | `machines/<name>/` | Per-machine runtime data: `cmos.ram`, `hostfs/`, `hd4.hdf`, `hd5.hdf` |
 | `shared/` | Common folder exposed as `HostFS::Shared.$` (created at startup if missing) |
-| `roms/` | RISC OS ROM images — see [official ROM instructions](http://www.marutan.net/rpcemu/manual/romimage.html) |
+| `roms/` | RISC OS ROM images — see [the project repository](https://github.com/andrewtimmins/rpcemu-extended) |
 | `resources/` | Blank floppy/disc templates for *Disc → Floppy → Create Blank* |
 | `poduleroms/` | Compiled extension ROM images (HostFS, ScrollWheel — the built-in Support podule) |
 | `podules/` | Expansion-card (podule) ROMs — shipped system components, selectable per machine |
@@ -352,5 +352,8 @@ networking features.
 ## License and credits
 
 - Licensed under the **GNU General Public License v2**. See `COPYING`.
-- Original emulator by the RPCEmu contributors.
+- Based on **[RPCEmu](http://www.marutan.net/rpcemu/)** — the open-source Acorn
+  Risc PC and A7000 emulator by Sarah Walker, Peter Howkins and the RPCEmu
+  contributors, hosted at <http://www.marutan.net/rpcemu/>. RPCEmu is distributed
+  under the GNU GPL v2; this fork inherits and complies with that license.
 - Spork Edition enhancements by Andrew Timmins and contributors.

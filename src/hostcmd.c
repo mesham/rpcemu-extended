@@ -20,22 +20,25 @@
  */
 
 #include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
+#include "socket-compat.h"
+#ifndef _WIN32
 #include <sys/un.h>
+#endif
 
 #include "hostcmd.h"
 #include "mem.h"
 #include "rpcemu.h"
+
+#ifdef _WIN32
+/* Default control-socket port on Windows, where AF_UNIX is unavailable and the
+   config default (a filesystem path) cannot be honoured. */
+#define HOSTCMD_DEFAULT_TCP_PORT 15590
+#endif
 
 /* SWI sub-operations, selected in R9 (mirrors the HostFS R9 convention). */
 #define HC_OP_REGISTER	0xffffffffu
@@ -260,13 +263,10 @@ hostcmd(ARMul_State *state)
 static void
 hc_set_nonblock(int fd)
 {
-	int fl = fcntl(fd, F_GETFL, 0);
-
-	if (fl >= 0) {
-		fcntl(fd, F_SETFL, fl | O_NONBLOCK);
-	}
+	socket_set_nonblocking(fd);
 }
 
+#ifndef _WIN32
 static int
 hc_listen_unix(const char *path)
 {
@@ -304,6 +304,7 @@ hc_listen_unix(const char *path)
 	rpclog("HostCmd: listening on AF_UNIX %s\n", path);
 	return fd;
 }
+#endif /* !_WIN32 */
 
 static int
 hc_listen_tcp(int port)
@@ -317,19 +318,19 @@ hc_listen_tcp(int port)
 		rpclog("HostCmd: socket() failed: %s\n", strerror(errno));
 		return -1;
 	}
-	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *) &on, sizeof(on));
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);	/* local only */
 	addr.sin_port = htons((uint16_t) port);
 	if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
 		rpclog("HostCmd: bind(127.0.0.1:%d) failed: %s\n", port, strerror(errno));
-		close(fd);
+		closesocket(fd);
 		return -1;
 	}
 	if (listen(fd, 1) < 0) {
 		rpclog("HostCmd: listen() failed: %s\n", strerror(errno));
-		close(fd);
+		closesocket(fd);
 		return -1;
 	}
 	hc_set_nonblock(fd);
@@ -356,6 +357,26 @@ hostcmd_init(void)
 		return;
 	}
 
+#ifdef _WIN32
+	/* Windows has no useful AF_UNIX (no filesystem permission semantics, and
+	   the unlink()-on-teardown is meaningless), so the control socket is TCP
+	   loopback only. A bare integer in hostcmd_socket selects the port;
+	   anything else falls back to the default port. */
+	{
+		int port = HOSTCMD_DEFAULT_TCP_PORT;
+
+		if (config.hostcmd_socket[0] != '\0'
+		    && config.hostcmd_socket[0] != '/')
+		{
+			int p = atoi(config.hostcmd_socket);
+
+			if (p > 0 && p < 65536) {
+				port = p;
+			}
+		}
+		hc.listen_fd = hc_listen_tcp(port);
+	}
+#else
 	/* Transport selection from config.hostcmd_socket:
 	   - empty or path-like ('/')  -> AF_UNIX
 	   - a bare integer            -> TCP 127.0.0.1:<port>
@@ -381,13 +402,14 @@ hostcmd_init(void)
 			    config.hostcmd_socket);
 		}
 	}
+#endif
 }
 
 static void
 hc_drop_client(void)
 {
 	if (hc.client_fd >= 0) {
-		close(hc.client_fd);
+		closesocket(hc.client_fd);
 		hc.client_fd = -1;
 	}
 	hc.in_len = 0;
@@ -421,17 +443,19 @@ void
 hostcmd_close(void)
 {
 	if (hc.client_fd >= 0) {
-		close(hc.client_fd);
+		closesocket(hc.client_fd);
 		hc.client_fd = -1;
 	}
 	if (hc.listen_fd >= 0) {
-		close(hc.listen_fd);
+		closesocket(hc.listen_fd);
 		hc.listen_fd = -1;
 	}
+#ifndef _WIN32
 	if (!hc.is_tcp && hc.sock_path[0] != '\0') {
 		unlink(hc.sock_path);
 		hc.sock_path[0] = '\0';
 	}
+#endif
 	hc.initialised = 0;
 }
 
@@ -444,13 +468,13 @@ hc_read_client(void)
 	ssize_t n;
 	ssize_t i;
 
-	n = recv(hc.client_fd, tmp, sizeof(tmp), 0);
+	n = recv(hc.client_fd, (char *) tmp, sizeof(tmp), 0);
 	if (n == 0) {
 		hc_drop_client();
 		return;
 	}
 	if (n < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+		if (sock_errno() == SOCK_EWOULDBLOCK || sock_errno() == SOCK_EAGAIN) {
 			return;
 		}
 		hc_drop_client();
@@ -505,11 +529,11 @@ hc_write_client(void)
 		size_t used = hc_ring_used();
 		size_t to_end = HC_OUT_RING_SZ - hc.out_tail;
 		size_t contig = (used < to_end) ? used : to_end;
-		ssize_t n = send(hc.client_fd, &hc.out_ring[hc.out_tail], contig,
+		ssize_t n = send(hc.client_fd, (const char *) &hc.out_ring[hc.out_tail], contig,
 		    MSG_NOSIGNAL);
 
 		if (n < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			if (sock_errno() == SOCK_EWOULDBLOCK || sock_errno() == SOCK_EAGAIN) {
 				return;
 			}
 			hc_drop_client();

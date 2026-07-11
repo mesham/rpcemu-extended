@@ -27,14 +27,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
+#include "../socket-compat.h"
+#ifndef _WIN32
 #include <sys/un.h>
+#endif
 
+#ifdef _WIN32
+/* Matches HOSTCMD_DEFAULT_TCP_PORT in hostcmd.c (Windows has no AF_UNIX). */
+#define RPCEMU_RUN_DEFAULT_TCP "127.0.0.1:15590"
+#endif
+
+#ifndef _WIN32
 static const char *
 default_socket_path(char *buf, size_t buflen)
 {
@@ -50,7 +54,9 @@ default_socket_path(char *buf, size_t buflen)
 	}
 	return buf;
 }
+#endif /* !_WIN32 */
 
+#ifndef _WIN32
 static int
 connect_unix(const char *path)
 {
@@ -72,11 +78,12 @@ connect_unix(const char *path)
 	if (connect(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
 		fprintf(stderr, "rpcemu-run: cannot connect to %s: %s\n",
 		    path, strerror(errno));
-		close(fd);
+		closesocket(fd);
 		return -1;
 	}
 	return fd;
 }
+#endif /* !_WIN32 */
 
 static int
 connect_tcp(const char *hostport)
@@ -116,7 +123,7 @@ connect_tcp(const char *hostport)
 		if (connect(fd, rp->ai_addr, rp->ai_addrlen) == 0) {
 			break;
 		}
-		close(fd);
+		closesocket(fd);
 		fd = -1;
 	}
 	freeaddrinfo(res);
@@ -133,7 +140,7 @@ read_exact(int fd, void *buf, size_t n)
 	uint8_t *p = buf;
 
 	while (n > 0) {
-		ssize_t r = read(fd, p, n);
+		ssize_t r = recv(fd, (char *) p, (int) n, 0);
 
 		if (r <= 0) {
 			return -1;
@@ -160,7 +167,7 @@ run_one(int fd, const char *cmdline)
 	memcpy(line, cmdline, clen);
 	line[clen] = '\n';
 	line[clen + 1] = '\0';
-	if (write(fd, line, clen + 1) != (ssize_t) (clen + 1)) {
+	if (send(fd, line, (int) (clen + 1), 0) != (ssize_t) (clen + 1)) {
 		free(line);
 		fprintf(stderr, "rpcemu-run: write failed: %s\n", strerror(errno));
 		return -1;
@@ -230,6 +237,25 @@ main(int argc, char **argv)
 	int i;
 	int fd;
 
+#ifdef _WIN32
+	{
+		WSADATA wsadata;
+
+		if (WSAStartup(MAKEWORD(2, 2), &wsadata) != 0) {
+			fprintf(stderr, "rpcemu-run: WSAStartup failed\n");
+			return 1;
+		}
+	}
+	/* argv[0] may use backslashes on Windows. */
+	{
+		const char *bslash = strrchr(argv[0], '\\');
+
+		if (bslash != NULL && (base == NULL || bslash > base)) {
+			base = bslash;
+		}
+	}
+#endif
+
 	base = (base != NULL) ? base + 1 : argv[0];
 	interactive = (strstr(base, "shell") != NULL);
 
@@ -257,6 +283,17 @@ main(int argc, char **argv)
 
 	if (tcp != NULL) {
 		fd = connect_tcp(tcp);
+#ifdef _WIN32
+	} else {
+		/* No AF_UNIX on Windows: default to the HostCmd TCP loopback port. */
+		if (sock_path != NULL) {
+			fprintf(stderr, "rpcemu-run: --socket is unsupported on Windows; "
+			    "use --tcp host:port (defaulting to %s)\n",
+			    RPCEMU_RUN_DEFAULT_TCP);
+		}
+		fd = connect_tcp(RPCEMU_RUN_DEFAULT_TCP);
+	}
+#else
 	} else {
 		char pathbuf[512];
 		const char *path = sock_path ? sock_path
@@ -264,6 +301,7 @@ main(int argc, char **argv)
 
 		fd = connect_unix(path);
 	}
+#endif
 	if (fd < 0) {
 		return 1;
 	}
@@ -281,13 +319,13 @@ main(int argc, char **argv)
 
 			if (n < 0 || (size_t) n >= sizeof(cmd) - off) {
 				fprintf(stderr, "rpcemu-run: command too long\n");
-				close(fd);
+				closesocket(fd);
 				return 2;
 			}
 			off += (size_t) n;
 		}
 		rc = run_one(fd, cmd);
-		close(fd);
+		closesocket(fd);
 		return (rc < 0) ? 1 : rc;
 	}
 
@@ -316,7 +354,7 @@ main(int argc, char **argv)
 				fprintf(stderr, "[return code %d]\n", rc);
 			}
 		}
-		close(fd);
+		closesocket(fd);
 	}
 	return 0;
 }

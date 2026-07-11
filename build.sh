@@ -186,6 +186,9 @@ stage_linux_release() {
 	cp -a roms "$LINUX_RELEASE/"
 	cp -a podules "$LINUX_RELEASE/"
 	cp -a default "$LINUX_RELEASE/"
+	# Common HostFS "Shared" disc (shared across machines). Normally created on
+	# first launch by the emulator; pre-create it so a fresh release is complete.
+	mkdir -p "$LINUX_RELEASE/shared"
 	rm -rf "$LINUX_RELEASE/machines/Default"
 	mkdir -p "$LINUX_RELEASE/machines/Default"
 	if [ -d machines/Default ]; then

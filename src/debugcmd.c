@@ -20,18 +20,15 @@
  */
 
 #include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
+#include "socket-compat.h"
+#ifndef _WIN32
 #include <sys/un.h>
+#endif
 
 #include "debugcmd.h"
 #include "arm.h"
@@ -39,6 +36,12 @@
 #include "cp15.h"
 #include "mem.h"
 #include "rpcemu.h"
+
+#ifdef _WIN32
+/* Default control-socket port on Windows, where AF_UNIX is unavailable and the
+   config default (a filesystem path) cannot be honoured. */
+#define DEBUGCMD_DEFAULT_TCP_PORT 15591
+#endif
 
 #define DC_IN_BUF_SZ	512		/* one request line */
 #define DC_OUT_RING_SZ	(256u * 1024u)	/* MUST be a power of two */
@@ -499,13 +502,10 @@ dc_dispatch(char *line)
 static void
 dc_set_nonblock(int fd)
 {
-	int fl = fcntl(fd, F_GETFL, 0);
-
-	if (fl >= 0) {
-		fcntl(fd, F_SETFL, fl | O_NONBLOCK);
-	}
+	socket_set_nonblocking(fd);
 }
 
+#ifndef _WIN32
 static int
 dc_listen_unix(const char *path)
 {
@@ -543,6 +543,7 @@ dc_listen_unix(const char *path)
 	rpclog("DebugCmd: listening on AF_UNIX %s\n", path);
 	return fd;
 }
+#endif /* !_WIN32 */
 
 static int
 dc_listen_tcp(int port)
@@ -556,19 +557,19 @@ dc_listen_tcp(int port)
 		rpclog("DebugCmd: socket() failed: %s\n", strerror(errno));
 		return -1;
 	}
-	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *) &on, sizeof(on));
 	memset(&addr, 0, sizeof(addr));
 	addr.sin_family = AF_INET;
 	addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 	addr.sin_port = htons((uint16_t) port);
 	if (bind(fd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
 		rpclog("DebugCmd: bind(127.0.0.1:%d) failed: %s\n", port, strerror(errno));
-		close(fd);
+		closesocket(fd);
 		return -1;
 	}
 	if (listen(fd, 1) < 0) {
 		rpclog("DebugCmd: listen() failed: %s\n", strerror(errno));
-		close(fd);
+		closesocket(fd);
 		return -1;
 	}
 	dc_set_nonblock(fd);
@@ -592,6 +593,24 @@ debugcmd_init(void)
 	if (!config.debug_enabled) {
 		return;
 	}
+#ifdef _WIN32
+	/* Windows: TCP loopback only (no useful AF_UNIX). A bare integer in
+	   debug_socket selects the port; anything else uses the default port. */
+	{
+		int port = DEBUGCMD_DEFAULT_TCP_PORT;
+
+		if (config.debug_socket[0] != '\0'
+		    && config.debug_socket[0] != '/')
+		{
+			int p = atoi(config.debug_socket);
+
+			if (p > 0 && p < 65536) {
+				port = p;
+			}
+		}
+		dc.listen_fd = dc_listen_tcp(port);
+	}
+#else
 	if (config.debug_socket[0] == '\0' || config.debug_socket[0] == '/') {
 		char path[512];
 
@@ -613,13 +632,14 @@ debugcmd_init(void)
 			    config.debug_socket);
 		}
 	}
+#endif
 }
 
 static void
 dc_drop_client(void)
 {
 	if (dc.client_fd >= 0) {
-		close(dc.client_fd);
+		closesocket(dc.client_fd);
 		dc.client_fd = -1;
 	}
 	dc.in_len = 0;
@@ -641,17 +661,19 @@ void
 debugcmd_close(void)
 {
 	if (dc.client_fd >= 0) {
-		close(dc.client_fd);
+		closesocket(dc.client_fd);
 		dc.client_fd = -1;
 	}
 	if (dc.listen_fd >= 0) {
-		close(dc.listen_fd);
+		closesocket(dc.listen_fd);
 		dc.listen_fd = -1;
 	}
+#ifndef _WIN32
 	if (!dc.is_tcp && dc.sock_path[0] != '\0') {
 		unlink(dc.sock_path);
 		dc.sock_path[0] = '\0';
 	}
+#endif
 	dc.initialised = 0;
 }
 
@@ -664,13 +686,13 @@ dc_read_client(void)
 	ssize_t nread;
 	ssize_t i;
 
-	nread = recv(dc.client_fd, tmp, sizeof(tmp), 0);
+	nread = recv(dc.client_fd, (char *) tmp, sizeof(tmp), 0);
 	if (nread == 0) {
 		dc_drop_client();
 		return;
 	}
 	if (nread < 0) {
-		if (errno == EAGAIN || errno == EWOULDBLOCK) {
+		if (sock_errno() == SOCK_EWOULDBLOCK || sock_errno() == SOCK_EAGAIN) {
 			return;
 		}
 		dc_drop_client();
@@ -706,11 +728,11 @@ dc_write_client(void)
 		size_t used = dc_ring_used();
 		size_t to_end = DC_OUT_RING_SZ - dc.out_tail;
 		size_t contig = (used < to_end) ? used : to_end;
-		ssize_t nwr = send(dc.client_fd, &dc.out_ring[dc.out_tail], contig,
+		ssize_t nwr = send(dc.client_fd, (const char *) &dc.out_ring[dc.out_tail], contig,
 		    MSG_NOSIGNAL);
 
 		if (nwr < 0) {
-			if (errno == EAGAIN || errno == EWOULDBLOCK) {
+			if (sock_errno() == SOCK_EWOULDBLOCK || sock_errno() == SOCK_EAGAIN) {
 				return;
 			}
 			dc_drop_client();

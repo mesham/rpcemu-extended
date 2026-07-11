@@ -40,27 +40,49 @@
 #include <string.h>
 #include <time.h>
 
+#include "socket-compat.h"
+
+#ifdef _WIN32
+
+#include <iphlpapi.h>
+
+#define relay_closesocket(s) closesocket(s)
+#define RELAY_WOULDBLOCK     WSAEWOULDBLOCK
+#define sock_strerror()      relay_sock_strerror()
+
+#else
+
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <unistd.h>
-#include <fcntl.h>
 #include <ifaddrs.h>
 #include <net/if.h>
+
+#define relay_closesocket(s) close(s)
+#define RELAY_WOULDBLOCK     EWOULDBLOCK
+#define sock_strerror() strerror(errno)
+
+#endif
 
 typedef int relay_socket_t;
 #define RELAY_INVALID_SOCKET (-1)
 #define RELAY_SOCKET_ERROR   (-1)
-#define relay_closesocket(s) close(s)
-#define RELAY_WOULDBLOCK     EWOULDBLOCK
-
-#define sock_strerror() strerror(errno)
 
 #include "broadcast_relay.h"
 #include "rpcemu.h"
 #include "network.h"
 #include "network-nat.h"
+
+#ifdef _WIN32
+/* Winsock reports errors via WSAGetLastError(), not errno. Format the code
+   for the (diagnostic-only) log messages. */
+static const char *
+relay_sock_strerror(void)
+{
+	static char buf[32];
+
+	snprintf(buf, sizeof(buf), "winsock error %d", WSAGetLastError());
+	return buf;
+}
+#endif
 
 /* Access+ ports */
 #define ACCESS_PORT_ANNOUNCE    32770
@@ -151,6 +173,68 @@ find_socket_for_port(uint16_t port)
  * Find the broadcast address for the first suitable network interface.
  * Skips loopback and interfaces without broadcast capability.
  */
+#ifdef _WIN32
+static int
+get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
+{
+    /* Enumerate IPv4 adapters via GetAdaptersInfo() (iphlpapi). For the first
+       non-loopback adapter with a real address, derive the directed broadcast
+       address from the IP and subnet mask (bcast = ip | ~mask). */
+    IP_ADAPTER_INFO *adapters = NULL, *ad;
+    ULONG size = 0;
+    DWORD ret;
+    int found = 0;
+
+    ret = GetAdaptersInfo(NULL, &size);
+    if (ret != ERROR_BUFFER_OVERFLOW) {
+        rpclog("broadcast_relay: GetAdaptersInfo() sizing failed: %lu\n",
+               (unsigned long) ret);
+        return -1;
+    }
+    adapters = malloc(size);
+    if (adapters == NULL) {
+        return -1;
+    }
+    ret = GetAdaptersInfo(adapters, &size);
+    if (ret != ERROR_SUCCESS) {
+        rpclog("broadcast_relay: GetAdaptersInfo() failed: %lu\n",
+               (unsigned long) ret);
+        free(adapters);
+        return -1;
+    }
+
+    for (ad = adapters; ad != NULL && !found; ad = ad->Next) {
+        IP_ADDR_STRING *ip;
+
+        if (ad->Type == MIB_IF_TYPE_LOOPBACK) {
+            continue;
+        }
+        for (ip = &ad->IpAddressList; ip != NULL; ip = ip->Next) {
+            struct in_addr ipaddr, mask;
+
+            ipaddr.s_addr = inet_addr(ip->IpAddress.String);
+            mask.s_addr = inet_addr(ip->IpMask.String);
+
+            /* Skip unconfigured entries (0.0.0.0). */
+            if (ipaddr.s_addr == 0 || ipaddr.s_addr == INADDR_NONE) {
+                continue;
+            }
+
+            host->s_addr = ipaddr.s_addr;
+            bcast->s_addr = ipaddr.s_addr | ~mask.s_addr;
+            found = 1;
+
+            rpclog("broadcast_relay: using adapter %s, host %s, ",
+                   ad->Description, inet_ntoa(*host));
+            rpclog("broadcast %s\n", inet_ntoa(*bcast));
+            break;
+        }
+    }
+
+    free(adapters);
+    return found ? 0 : -1;
+}
+#else
 static int
 get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
 {
@@ -206,6 +290,7 @@ get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
     freeifaddrs(ifaddr);
     return found ? 0 : -1;
 }
+#endif /* _WIN32 */
 
 /**
  * Initialize the broadcast relay.
@@ -214,7 +299,6 @@ int
 broadcast_relay_init(void)
 {
     int optval = 1;
-    int flags;
     struct sockaddr_in bind_addr;
     struct in_addr bcast, host;
     int i;
@@ -237,7 +321,7 @@ broadcast_relay_init(void)
 
         /* Enable broadcast */
         if (setsockopt(relay.sockets[i], SOL_SOCKET, SO_BROADCAST,
-                       &optval, sizeof(optval)) == RELAY_SOCKET_ERROR) {
+                       (const char *) &optval, sizeof(optval)) == RELAY_SOCKET_ERROR) {
             rpclog("broadcast_relay: SO_BROADCAST for port %d failed: %s\n",
                    access_ports[i], sock_strerror());
             relay_closesocket(relay.sockets[i]);
@@ -247,7 +331,7 @@ broadcast_relay_init(void)
 
         /* Allow address reuse (in case of restart) */
         if (setsockopt(relay.sockets[i], SOL_SOCKET, SO_REUSEADDR,
-                       &optval, sizeof(optval)) == RELAY_SOCKET_ERROR) {
+                       (const char *) &optval, sizeof(optval)) == RELAY_SOCKET_ERROR) {
             rpclog("broadcast_relay: SO_REUSEADDR for port %d failed: %s\n",
                    access_ports[i], sock_strerror());
             relay_closesocket(relay.sockets[i]);
@@ -270,9 +354,8 @@ broadcast_relay_init(void)
         }
 
         /* Set non-blocking */
-        flags = fcntl(relay.sockets[i], F_GETFL, 0);
-        if (flags < 0 || fcntl(relay.sockets[i], F_SETFL, flags | O_NONBLOCK) < 0) {
-            rpclog("broadcast_relay: fcntl() for port %d failed: %s\n",
+        if (socket_set_nonblocking(relay.sockets[i]) != 0) {
+            rpclog("broadcast_relay: set non-blocking for port %d failed: %s\n",
                    access_ports[i], sock_strerror());
             relay_closesocket(relay.sockets[i]);
             relay.sockets[i] = RELAY_INVALID_SOCKET;
@@ -630,7 +713,7 @@ poll_socket(int sock_idx)
 
     /* Non-blocking receive (socket is already set non-blocking) */
     fromlen = sizeof(from);
-    n = recvfrom(relay.sockets[sock_idx], udp_payload, sizeof(udp_payload), MSG_DONTWAIT,
+    n = recvfrom(relay.sockets[sock_idx], (char *) udp_payload, sizeof(udp_payload), MSG_DONTWAIT,
                  (struct sockaddr *)&from, &fromlen);
 
     if (n <= 0) {
@@ -847,7 +930,7 @@ broadcast_relay_tx(const uint8_t *pkt, int pkt_len)
     }
 
     /* Send from the appropriate socket (bound to correct source port) */
-    sent = sendto(relay.sockets[sock_idx], payload, payload_len, 0,
+    sent = sendto(relay.sockets[sock_idx], (const char *) payload, payload_len, 0,
                   (struct sockaddr *)&dest, sizeof(dest));
 
     if (sent < 0) {

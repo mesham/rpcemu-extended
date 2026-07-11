@@ -20,20 +20,14 @@
 
 #include <ctype.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
 #include <time.h>
-#include <unistd.h>
-
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <sys/socket.h>
 #include <sys/types.h>
+
+#include "socket-compat.h"
 
 #include "rpcemu.h"
 #include "serial.h"
@@ -253,10 +247,15 @@ serial_attach_log(SerialPortID port, const char *path)
 static int64_t
 modem_now_ms(void)
 {
+#ifdef _WIN32
+	/* GetTickCount64() is a monotonic millisecond clock since boot. */
+	return (int64_t) GetTickCount64();
+#else
 	struct timespec ts;
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (int64_t) ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+#endif
 }
 
 static void
@@ -339,7 +338,7 @@ static void
 modem_close(ModemState *m)
 {
 	if (m->fd >= 0) {
-		close(m->fd);
+		closesocket(m->fd);
 		m->fd = -1;
 	}
 	if (m->ai != NULL) {
@@ -391,7 +390,7 @@ modem_try_next_address(ModemState *m, SerialPortID port)
 {
 	while (m->ai_next != NULL) {
 		struct addrinfo *ai = m->ai_next;
-		int fd, flags, one = 1, r;
+		int fd, one = 1, r;
 
 		m->ai_next = ai->ai_next;
 
@@ -399,9 +398,8 @@ modem_try_next_address(ModemState *m, SerialPortID port)
 		if (fd < 0) {
 			continue;
 		}
-		flags = fcntl(fd, F_GETFL, 0);
-		fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-		setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+		socket_set_nonblocking(fd);
+		setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, (const char *) &one, sizeof(one));
 
 		r = connect(fd, ai->ai_addr, ai->ai_addrlen);
 		if (r == 0) {
@@ -409,13 +407,13 @@ modem_try_next_address(ModemState *m, SerialPortID port)
 			modem_on_connected(m, port);
 			return;
 		}
-		if (r < 0 && (errno == EINPROGRESS || errno == EINTR)) {
+		if (r < 0 && (sock_errno() == SOCK_EINPROGRESS || sock_errno() == SOCK_EINTR)) {
 			m->fd = fd;
 			m->state = MODEM_CONNECTING;
 			m->connect_deadline_ms = modem_now_ms() + MODEM_CONNECT_TIMEOUT_MS;
 			return;
 		}
-		close(fd);
+		closesocket(fd);
 	}
 
 	/* No addresses left to try. */
@@ -970,16 +968,16 @@ serial_modem_poll(void)
 			    (pfd.revents & (POLLOUT | POLLERR | POLLHUP))) {
 				int err = 0;
 				socklen_t elen = sizeof(err);
-				getsockopt(m->fd, SOL_SOCKET, SO_ERROR, &err, &elen);
+				getsockopt(m->fd, SOL_SOCKET, SO_ERROR, (char *) &err, &elen);
 				if (err == 0) {
 					modem_on_connected(m, (SerialPortID) port);
 				} else {
-					close(m->fd);
+					closesocket(m->fd);
 					m->fd = -1;
 					modem_try_next_address(m, (SerialPortID) port);
 				}
 			} else if (modem_now_ms() > m->connect_deadline_ms) {
-				close(m->fd);
+				closesocket(m->fd);
 				m->fd = -1;
 				modem_try_next_address(m, (SerialPortID) port);
 			}
@@ -990,7 +988,7 @@ serial_modem_poll(void)
 		    (m->state == MODEM_ONLINE || m->state == MODEM_COMMAND_ONLINE)) {
 			for (;;) {
 				uint8_t buf[2048];
-				ssize_t n = recv(m->fd, buf, sizeof(buf), 0);
+				ssize_t n = recv(m->fd, (char *) buf, sizeof(buf), 0);
 				if (n > 0) {
 					modem_telnet_input(m, buf, (size_t) n);
 					if ((size_t) n < sizeof(buf)) {
@@ -1000,10 +998,10 @@ serial_modem_poll(void)
 					modem_carrier_lost(m, (SerialPortID) port);
 					break;
 				} else {
-					if (errno == EINTR) {
+					if (sock_errno() == SOCK_EINTR) {
 						continue;
 					}
-					if (errno != EAGAIN && errno != EWOULDBLOCK) {
+					if (sock_errno() != SOCK_EAGAIN && sock_errno() != SOCK_EWOULDBLOCK) {
 						modem_carrier_lost(m, (SerialPortID) port);
 					}
 					break;
@@ -1017,15 +1015,15 @@ serial_modem_poll(void)
 			if (contig > m->tx_count) {
 				contig = m->tx_count;
 			}
-			ssize_t n = send(m->fd, &m->tx[m->tx_tail], contig, MSG_NOSIGNAL);
+			ssize_t n = send(m->fd, (const char *) &m->tx[m->tx_tail], contig, MSG_NOSIGNAL);
 			if (n > 0) {
 				m->tx_tail = (m->tx_tail + (size_t) n) % MODEM_RING_SIZE;
 				m->tx_count -= (size_t) n;
 			} else {
-				if (n < 0 && errno == EINTR) {
+				if (n < 0 && sock_errno() == SOCK_EINTR) {
 					continue;
 				}
-				if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+				if (n < 0 && (sock_errno() == SOCK_EAGAIN || sock_errno() == SOCK_EWOULDBLOCK)) {
 					break; /* socket buffer full; try again next poll */
 				}
 				modem_carrier_lost(m, (SerialPortID) port);

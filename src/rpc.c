@@ -20,14 +20,14 @@
 
 #include <assert.h>
 #include <errno.h>
-#include <signal.h>
 #include <string.h>
 
-#include <pthread.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <sys/statvfs.h>
-#include <sys/types.h>
 #include <sys/utsname.h>
-#include <sys/wait.h>
+#endif
 
 #include "rpcemu.h"
 #include "mem.h"
@@ -47,18 +47,31 @@
 int
 path_disk_info(const char *path, disk_info *d)
 {
-	struct statvfs s;
-	int ret;
-
 	assert(path != NULL);
 	assert(d != NULL);
 
-	if ((ret = statvfs(path, &s)) != 0) {
-		return 0;
-	}
+#ifdef _WIN32
+	{
+		ULARGE_INTEGER avail, total;
 
-	d->size = (uint64_t) s.f_blocks * (uint64_t) s.f_frsize;
-	d->free = (uint64_t) s.f_bavail * (uint64_t) s.f_frsize;
+		/* free bytes available to the caller, total bytes on the volume */
+		if (!GetDiskFreeSpaceExA(path, &avail, &total, NULL)) {
+			return 0;
+		}
+		d->size = (uint64_t) total.QuadPart;
+		d->free = (uint64_t) avail.QuadPart;
+	}
+#else
+	{
+		struct statvfs s;
+
+		if (statvfs(path, &s) != 0) {
+			return 0;
+		}
+		d->size = (uint64_t) s.f_blocks * (uint64_t) s.f_frsize;
+		d->free = (uint64_t) s.f_bavail * (uint64_t) s.f_frsize;
+	}
+#endif
 
 	return 1;
 }
@@ -73,6 +86,12 @@ path_disk_info(const char *path, disk_info *d)
 void
 rpcemu_log_os(void)
 {
+#ifdef _WIN32
+	/* GetVersionEx() is deprecated and, without an application manifest,
+	   lies about the version on Windows 8.1+. A static identifier is enough
+	   for the log. */
+	rpclog("OS: SysName = Windows\n");
+#else
 	struct utsname u;
 
 	if (uname(&u) == -1) {
@@ -84,6 +103,7 @@ rpcemu_log_os(void)
 	rpclog("OS: Release = %s\n", u.release);
 	rpclog("OS: Version = %s\n", u.version);
 	rpclog("OS: Machine = %s\n", u.machine);
+#endif
 }
 
 

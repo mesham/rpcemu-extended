@@ -39,7 +39,7 @@
 #define ROM_PROBE_SCAN_BYTES (256u * 1024u)
 
 /* Website with help on finding romimages */
-#define ROM_WEB_SITE "http://www.marutan.net/rpcemu"
+#define ROM_WEB_SITE "https://github.com/andrewtimmins/rpcemu-extended"
 
 #define ROM_WEB_SITE_STRING "For information on how to acquire ROM images please visit\n" ROM_WEB_SITE
 

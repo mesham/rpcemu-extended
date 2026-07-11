@@ -19,10 +19,40 @@
  */
 
 #include <dirent.h>
-#include <dlfcn.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+/* Loadable-podule support via the Win32 dynamic loader. Shim the handful of
+   dlfcn calls the loader below uses onto LoadLibrary/GetProcAddress. */
+#include <windows.h>
+#define RTLD_NOW 0
+#define PODULE_DLL_EXT "dll"
+
+static void *
+dlopen(const char *path, int flag)
+{
+	(void) flag;
+	return (void *) LoadLibraryA(path);
+}
+
+static void *
+dlsym(void *lib, const char *symbol)
+{
+	return (void *) (uintptr_t) GetProcAddress((HMODULE) lib, symbol);
+}
+
+static int
+dlclose(void *lib)
+{
+	return FreeLibrary((HMODULE) lib) ? 0 : -1;
+}
+#else
+#include <dlfcn.h>
+#define PODULE_DLL_EXT "so"
+#endif
 
 #include "rpcemu.h"
 #include "iomd.h"
@@ -154,7 +184,7 @@ load_external_podules(void)
 			continue;
 		}
 
-		snprintf(so_path, sizeof(so_path), "%s/%s/%s.so",
+		snprintf(so_path, sizeof(so_path), "%s/%s/%s." PODULE_DLL_EXT,
 		         podules_dir, dp->d_name, dp->d_name);
 
 		lib = dlopen(so_path, RTLD_NOW);

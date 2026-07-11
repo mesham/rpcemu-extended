@@ -42,11 +42,33 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(RPCEMU_GUI_TARGET "${RPCEMU_GUI_TARGET}-debug")
 endif()
 
+# Embed the toolbar SVG icon pack (src/gui/icons/*.svg) into the binary as
+# NUL-terminated byte arrays, so the icons need no runtime files and ship in
+# every build. Pure-CMake generation (file(READ HEX)) - no external tool, works
+# on Linux and MSYS2. Regenerated on configure; re-run cmake after editing an SVG.
+set(RPCEMU_TOOLBAR_SVGS
+    screenshot floppy cdrom reset mute unmute
+    fullscreen settings start pause step inspector)
+set(_svg_header "${CMAKE_CURRENT_BINARY_DIR}/toolbar_icons_svg.h")
+file(WRITE "${_svg_header}"
+     "// Generated from src/gui/icons/*.svg by CMake - do not edit.\n#pragma once\n\n")
+foreach(_svg ${RPCEMU_TOOLBAR_SVGS})
+    set(_svg_path "${CMAKE_CURRENT_SOURCE_DIR}/icons/${_svg}.svg")
+    if(NOT EXISTS "${_svg_path}")
+        message(FATAL_ERROR "Toolbar icon missing: ${_svg_path}")
+    endif()
+    file(READ "${_svg_path}" _hex HEX)
+    string(REGEX REPLACE "(..)" "0x\\1," _bytes "${_hex}")
+    file(APPEND "${_svg_header}"
+         "static const unsigned char ${_svg}_svg[] = { ${_bytes} 0x00 };\n")
+endforeach()
+
 add_executable(${RPCEMU_GUI_TARGET} ${GUI_SOURCES})
 
 target_include_directories(${RPCEMU_GUI_TARGET} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/..
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_compile_definitions(${RPCEMU_GUI_TARGET} PRIVATE
@@ -67,10 +89,18 @@ target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE
 )
 
 find_package(PkgConfig REQUIRED)
-pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
 pkg_check_modules(SDL2 REQUIRED sdl2)
-target_include_directories(${RPCEMU_GUI_TARGET} PRIVATE ${GTK3_INCLUDE_DIRS} ${SDL2_INCLUDE_DIRS})
-target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE ${GTK3_LIBRARIES} ${SDL2_LIBRARIES})
+target_include_directories(${RPCEMU_GUI_TARGET} PRIVATE ${SDL2_INCLUDE_DIRS})
+target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE ${SDL2_LIBRARIES})
+
+# GTK3 is only used for the wxGTK relative-mouse capture path in
+# emulator_panel.cpp (guarded by __WXGTK__). wxMSW does not use it, so require
+# it on Linux only.
+if(NOT WIN32)
+    pkg_check_modules(GTK3 REQUIRED gtk+-3.0)
+    target_include_directories(${RPCEMU_GUI_TARGET} PRIVATE ${GTK3_INCLUDE_DIRS})
+    target_link_libraries(${RPCEMU_GUI_TARGET} PRIVATE ${GTK3_LIBRARIES})
+endif()
 
 if(RPCEMU_ENABLE_VNC)
     find_package(PkgConfig REQUIRED)
@@ -87,7 +117,15 @@ set_target_properties(${RPCEMU_GUI_TARGET} PROPERTIES
 
 install(TARGETS ${RPCEMU_GUI_TARGET} RUNTIME DESTINATION bin)
 
-# Desktop launcher with Exec= pointing at the actual binary name.
-configure_file(${CMAKE_SOURCE_DIR}/packaging/rpcemu.desktop
-               ${CMAKE_BINARY_DIR}/rpcemu.desktop @ONLY)
-install(FILES ${CMAKE_BINARY_DIR}/rpcemu.desktop DESTINATION share/applications)
+# Desktop launcher + icon (freedesktop.org / Linux only).
+if(NOT WIN32)
+    # Desktop launcher with Exec= pointing at the actual binary name.
+    configure_file(${CMAKE_SOURCE_DIR}/packaging/rpcemu.desktop
+                   ${CMAKE_BINARY_DIR}/rpcemu.desktop @ONLY)
+    install(FILES ${CMAKE_BINARY_DIR}/rpcemu.desktop DESTINATION share/applications)
+    # Icon the .desktop's "Icon=rpcemu" resolves to via the hicolor theme.
+    if(EXISTS "${CMAKE_SOURCE_DIR}/resources/rpcemu.png")
+        install(FILES ${CMAKE_SOURCE_DIR}/resources/rpcemu.png
+                DESTINATION share/icons/hicolor/256x256/apps)
+    endif()
+endif()

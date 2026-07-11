@@ -35,6 +35,7 @@
 #include "mem.h"
 #include "hostfs.h"
 #include "hostfs_internal.h"
+#include "rpcemu-win.h"
 
 #define HOSTFS_PROTOCOL_VERSION	3
 

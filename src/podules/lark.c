@@ -454,7 +454,9 @@ const podule_header_t *lark_probe(const podule_callbacks_t *callbacks, char *pat
 	return &lark_podule_header;
 }
 
-#ifdef WIN32
+/* Only when this podule is built as a standalone loadable DLL; in the emulator
+   these podules are compiled into the core, where a per-file DllMain collides. */
+#if defined(WIN32) && defined(RPCEMU_PODULE_STANDALONE_DLL)
 BOOL APIENTRY DllMain (HINSTANCE hInst     /* Library instance handle. */ ,
 		       DWORD reason        /* Reason this function is being called. */ ,
 		       LPVOID reserved     /* Not used. */ )

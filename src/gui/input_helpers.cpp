@@ -129,9 +129,13 @@ static unsigned scancode_from_wx_key_code(int key_code)
 	}
 
 	if (key_code >= 'A' && key_code <= 'Z') {
+		// X11 hardware keycodes for A-Z (keyboard_map_key() expects these and
+		// maps them to PS/2). K and L are 0x2d/0x2e; earlier these were wrongly
+		// set to the PS/2 output values 0x42/0x4b (= Caps Lock / F9), so typing
+		// 'k' toggled Caps Lock. Only exercised on non-X11 (e.g. wxMSW).
 		static const unsigned letter_scancodes[] = {
 			0x26, 0x38, 0x36, 0x28, 0x1a, 0x29, 0x2a, 0x2b, 0x1f, 0x2c,
-			0x42, 0x4b, 0x3a, 0x39, 0x20, 0x21, 0x18, 0x1b, 0x27, 0x1c,
+			0x2d, 0x2e, 0x3a, 0x39, 0x20, 0x21, 0x18, 0x1b, 0x27, 0x1c,
 			0x1e, 0x37, 0x19, 0x35, 0x1d, 0x34,
 		};
 		return letter_scancodes[key_code - 'A'];
@@ -151,6 +155,12 @@ static unsigned scancode_from_wx_key_code(int key_code)
 
 unsigned InputNativeScancodeFromKeyEvent(const wxKeyEvent &event)
 {
+	// keyboard_map_key() is keyed by X11 hardware keycodes, so the raw-keycode
+	// paths are only meaningful under wxGTK/X11. On wxMSW the raw values are
+	// Windows scancodes/VK codes that the X11 table can't map (and GetRawKeyFlags
+	// is non-zero, which would wrongly short-circuit the portable fallback), so
+	// fall straight through to the wx-keycode mapping there.
+#if defined(__WXGTK__)
 	const unsigned hardware = static_cast<unsigned>(event.GetRawKeyFlags());
 	if (hardware != 0) {
 		return hardware;
@@ -160,6 +170,7 @@ unsigned InputNativeScancodeFromKeyEvent(const wxKeyEvent &event)
 	if (raw != 0 && keyboard_map_key(raw) != nullptr) {
 		return raw;
 	}
+#endif
 
 	return scancode_from_wx_key_code(event.GetKeyCode());
 }

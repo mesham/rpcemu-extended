@@ -15,7 +15,11 @@
 #include <limits.h>
 #include <strings.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <windows.h>
+#else
 #include <unistd.h>
+#endif
 
 #include "headless_bridge.h"
 #include "emulator_host.h"
@@ -63,6 +67,15 @@ std::string WithSep(std::string dir)
 
 std::string ExeDir()
 {
+#ifdef _WIN32
+	char buf[MAX_PATH];
+	const DWORD n = GetModuleFileNameA(NULL, buf, sizeof(buf));
+	if (n == 0 || n >= sizeof(buf)) {
+		return {};
+	}
+	const std::string path(buf, n);
+	const size_t slash = path.find_last_of("/\\");
+#else
 	char buf[PATH_MAX];
 	const ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
 	if (n <= 0) {
@@ -71,6 +84,7 @@ std::string ExeDir()
 	buf[n] = '\0';
 	const std::string path(buf);
 	const size_t slash = path.find_last_of('/');
+#endif
 	return slash == std::string::npos ? std::string() : path.substr(0, slash);
 }
 

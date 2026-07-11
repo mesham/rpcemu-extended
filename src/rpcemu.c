@@ -28,6 +28,12 @@
 #include <time.h>
 #include <unistd.h>
 
+#ifdef _WIN32
+/* Brings in Winsock2 (before windows.h) plus the Win32 API used for Sleep()
+   and the WSAStartup()/WSACleanup() bootstrap below. */
+#include "socket-compat.h"
+#endif
+
 #include "rpcemu.h"
 #include "mem.h"
 #include "vidc20.h"
@@ -850,6 +856,19 @@ rpcemu_prestart(void)
 void
 rpcemu_start(void)
 {
+#ifdef _WIN32
+	/* Initialise Winsock before anything opens a socket (hostcmd/debugcmd
+	   control sockets, SLiRP NAT, the TCP modem, the broadcast relay). */
+	{
+		WSADATA wsadata;
+		int err = WSAStartup(MAKEWORD(2, 2), &wsadata);
+
+		if (err != 0) {
+			fatal("WSAStartup failed: %d", err);
+		}
+	}
+#endif
+
 	hostfs_init();
 	hostcmd_init();
 	debugcmd_init();
@@ -1004,7 +1023,7 @@ rpcemu_idle(void)
 	debugcmd_poll();
 		/* Sleep if no interrupts pending */
 		if (!arm.event) {
-#ifdef RPCEMU_WIN
+#ifdef _WIN32
 			Sleep(1);
 #else
 			struct timespec tm;
@@ -1057,6 +1076,10 @@ endrpcemu(void)
 
 #ifdef RPCEMU_NETWORKING
 	network_reset();
+#endif
+
+#ifdef _WIN32
+	WSACleanup();
 #endif
 }
 
