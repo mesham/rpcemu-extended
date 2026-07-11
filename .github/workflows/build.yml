@@ -123,19 +123,39 @@ jobs:
           if-no-files-found: error
 
   macos-x86_64:
-    # Intel runner: builds the x86_64 slice WITH the dynarec and runs the JIT
-    # unit test on real macOS. This is our only x86-dynarec-on-macOS check
-    # (a Linux/osxcross build cannot be executed).
-    runs-on: macos-13
+    # Free Intel (macos-13) runners are effectively unavailable, so build the
+    # x86_64 slice (WITH the dynarec) on an Apple Silicon runner: Apple clang
+    # cross-compiles to x86_64 natively via CMAKE_OSX_ARCHITECTURES, we just
+    # need x86_64 libraries (from a Rosetta x86_64 Homebrew - the arm64 Homebrew
+    # in /opt/homebrew can't provide them) and Rosetta 2 to run the JIT test.
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver
+      - name: Install Rosetta 2
+        run: softwareupdate --install-rosetta --agree-to-license
 
-      - name: Build x86_64 slice (dynarec) + test
+      - name: Install x86_64 Homebrew + dependencies
+        run: |
+          # A separate Intel Homebrew installs into /usr/local (the arm64
+          # Homebrew lives in /opt/homebrew); both coexist. The install script
+          # is downloaded by the outer shell, then executed under Rosetta so it
+          # provisions the x86_64 tree.
+          if [ ! -x /usr/local/bin/brew ]; then
+            script="$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+            NONINTERACTIVE=1 arch -x86_64 /bin/bash -c "$script"
+          fi
+          arch -x86_64 /usr/local/bin/brew install cmake ninja pkg-config wxwidgets sdl2 libvncserver
+
+      - name: Build x86_64 slice + test (Rosetta)
         run: |
           chmod +x build-macos.sh
+          # Resolve wx-config / pkg-config / cmake from the x86_64 Homebrew
+          # (/usr/local) so the slice links x86_64 libraries; clang emits x86_64
+          # via CMAKE_OSX_ARCHITECTURES (set in build-macos.sh). The JIT test
+          # binary is x86_64 and runs under Rosetta.
+          export PATH="/usr/local/bin:$PATH"
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig"
           ./build-macos.sh --arch x86_64
 
       - name: Upload x86_64 slice
