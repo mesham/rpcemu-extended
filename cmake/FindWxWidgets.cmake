@@ -61,12 +61,16 @@ function(rpcemu_setup_wxwidgets target)
     if(WIN32)
         enable_language(RC)
         set(_wx_rc_file "${CMAKE_CURRENT_BINARY_DIR}/${target}_wx.rc")
-        file(WRITE "${_wx_rc_file}" "#include \"wx/msw/wx.rc\"\n")
-        # Application icon for the .exe (Explorer / taskbar). Windows uses the
-        # lowest-id icon resource as the executable icon, so give it id 1.
+        # Application icon for the .exe (Explorer / taskbar). Explorer uses the
+        # alphabetically-first icon resource; wx/msw/wx.rc defines "wxICON_AAA"
+        # (its own std.ico) specifically to be early, so ours must be defined
+        # BEFORE the include AND sort ahead of it ("APPICON" < "WXICON_AAA").
         set(_app_ico "${CMAKE_SOURCE_DIR}/resources/rpcemu.ico")
         if(EXISTS "${_app_ico}")
-            file(APPEND "${_wx_rc_file}" "1 ICON \"${_app_ico}\"\n")
+            file(WRITE "${_wx_rc_file}" "APPICON ICON \"${_app_ico}\"\n")
+            file(APPEND "${_wx_rc_file}" "#include \"wx/msw/wx.rc\"\n")
+        else()
+            file(WRITE "${_wx_rc_file}" "#include \"wx/msw/wx.rc\"\n")
         endif()
         set(_wx_rc_flags "")
         foreach(_d IN LISTS _wx_inc_dirs)

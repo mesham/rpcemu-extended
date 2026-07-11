@@ -193,11 +193,16 @@ stage_linux_release() {
 	mkdir -p "$LINUX_RELEASE/machines/Default"
 	if [ -d machines/Default ]; then
 		cp -a machines/Default/. "$LINUX_RELEASE/machines/Default/"
-	else
-		# Fresh clone / CI: derive the Default machine from the default/ seed.
-		[ -f default/cmos.ram ] && cp -a default/cmos.ram "$LINUX_RELEASE/machines/Default/"
-		[ -d default/hostfs ] && cp -a default/hostfs "$LINUX_RELEASE/machines/Default/"
 	fi
+	# Seed any machine files that aren't already present from the default/ seed.
+	# Only cmos.ram is tracked under machines/Default/; the HostFS contents
+	# (e.g. HardDisc4.5.30.util, the first-boot hard-disc installer) live in
+	# default/hostfs/. On a fresh clone / CI the copy above yields only cmos.ram,
+	# so hostfs/ must be seeded here or the shipped machine has no HostFS.
+	[ -f default/cmos.ram ] && [ ! -f "$LINUX_RELEASE/machines/Default/cmos.ram" ] && \
+		cp -a default/cmos.ram "$LINUX_RELEASE/machines/Default/"
+	[ -d default/hostfs ] && [ ! -d "$LINUX_RELEASE/machines/Default/hostfs" ] && \
+		cp -a default/hostfs "$LINUX_RELEASE/machines/Default/"
 	cp -f COPYING README.md COMPILE.md "$LINUX_RELEASE/" 2>/dev/null || true
 	cp -f setup-runtime-env.sh "$LINUX_RELEASE/" 2>/dev/null || true
 	if [ -f packaging/rpcemu.desktop ]; then

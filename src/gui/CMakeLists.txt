@@ -115,6 +115,14 @@ set_target_properties(${RPCEMU_GUI_TARGET} PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin
 )
 
+# On Windows, build as a GUI-subsystem app so no console window appears. MinGW
+# still enters through the app's main() (libmingw32 provides a WinMain shim), so
+# no code change is needed. (The cross build got this implicitly via wx-config's
+# -mwindows; the MSYS2 find_package path does not, hence set it explicitly.)
+if(WIN32)
+    set_target_properties(${RPCEMU_GUI_TARGET} PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
+
 install(TARGETS ${RPCEMU_GUI_TARGET} RUNTIME DESTINATION bin)
 
 # Desktop launcher + icon (freedesktop.org / Linux only).
