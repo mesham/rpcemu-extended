@@ -70,6 +70,25 @@ ListBoxSelectionCount(wxListBox *list)
 	return list->GetSelections(selections);
 }
 
+/*
+ * Update a read-only text control only when its content actually changes.
+ *
+ * wxTextCtrl::SetValue()/ChangeValue() always clear the current selection and
+ * reset the insertion point, even when the new text is identical to the old.
+ * The inspector auto-refreshes every 500 ms, so rewriting an unchanged control
+ * would repeatedly wipe any selection the user has made - which is exactly what
+ * stops register values being selected and copied while the machine is paused
+ * (the register text is frozen, yet was being rewritten regardless). Skipping
+ * the no-op rewrite preserves the selection (and avoids needless flicker).
+ */
+static void
+SetTextIfChanged(wxTextCtrl *ctrl, const wxString &text)
+{
+	if (ctrl != nullptr && ctrl->GetValue() != text) {
+		ctrl->ChangeValue(text);
+	}
+}
+
 wxBEGIN_EVENT_TABLE(MachineInspectorWindow, wxFrame)
 	EVT_TIMER(wxID_ANY, MachineInspectorWindow::OnTimer)
 	EVT_BUTTON(ID_REFRESH_NOW, MachineInspectorWindow::OnRefreshNow)
@@ -373,8 +392,8 @@ void MachineInspectorWindow::ApplySnapshot(const MachineSnapshot &snapshot)
 	last_snapshot_ = snapshot;
 
 	summary_label_->SetLabel(MakeSummary(snapshot));
-	cpu_view_->SetValue(FormatRegisters(snapshot));
-	peripheral_view_->SetValue(FormatPeripheralSummary(snapshot));
+	SetTextIfChanged(cpu_view_, FormatRegisters(snapshot));
+	SetTextIfChanged(peripheral_view_, FormatPeripheralSummary(snapshot));
 	PopulateBreakpointList(snapshot);
 	PopulateWatchpointList(snapshot);
 	UpdateDebuggerUi(snapshot);
@@ -731,7 +750,7 @@ void MachineInspectorWindow::DrainTraceEvents()
 void MachineInspectorWindow::RefreshDisassembly(uint32_t address)
 {
 	disasm_current_address_ = address;
-	disasm_view_->SetValue(wxString::FromUTF8(emulator_disassemble_at(address, 32)));
+	SetTextIfChanged(disasm_view_, wxString::FromUTF8(emulator_disassemble_at(address, 32)));
 }
 
 void MachineInspectorWindow::RefreshMemoryView(uint32_t address)
