@@ -168,31 +168,30 @@ err_failed_registration:
 	.string	"Failed registration with emulator"
 	.align
 
-bootdir_var_name:
-	.string	"Boot$Dir"
-	.align
-
 bootdir_set_cmd:
 	.string	"Set Boot$Dir HostFS::HostFS.$"
 	.align
 
-	@ Set Boot$Dir during module init if not already defined.
+	@ Define Boot$Dir during module init.
+	@
+	@ FilerAction drag-copy canonicalises <Boot$Dir>.^ (ROOL #660); if
+	@ Boot$Dir is undefined that reduces to the bare ".^", which fails with
+	@ "File name '.^' not recognised" - so on a machine with no !Boot to
+	@ define Boot$Dir, dragging a file between the HostFS discs errors instead
+	@ of copying.
+	@
+	@ We define it unconditionally rather than probing with OS_ReadVarVal
+	@ first: an undefined variable does not report back distinguishably via
+	@ the returned flags, and it is safe to set here regardless - podule module
+	@ init runs during ROM start-up, before any !Boot, so a real !Boot still
+	@ overrides this afterwards, while a machine without one gets a usable
+	@ default and working drag-and-drop.
 init_ensure_bootdir:
 	stmfd	sp!, {r0-r3, lr}
-
-	adr	r0, bootdir_var_name
-	mov	r1, #0
-	mvn	r2, #0
-	mov	r3, #0
-	swi	XOS_ReadVarVal
-	bvs	init_bootdir_done
-	cmp	r2, #0
-	blt	init_bootdir_done
 
 	adr	r0, bootdir_set_cmd
 	swi	XOS_CLI
 
-init_bootdir_done:
 	ldmfd	sp!, {r0-r3, pc}
 
 
