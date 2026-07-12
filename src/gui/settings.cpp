@@ -464,10 +464,12 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	}
 
 	settings.Read("vram_size", &sText, wxEmptyString);
-	if (sText.IsEmpty()) {
-		cfg->vram_size = 8;
-	} else if (sText == "0") {
+	if (sText == "0") {
 		cfg->vram_size = 0;
+	} else if (sText == "2") {
+		cfg->vram_size = 2;
+	} else if (sText == "16") {
+		cfg->vram_size = 16;
 	} else {
 		cfg->vram_size = 8;
 	}
@@ -602,7 +604,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	const wxString mem_size_str = wxString::Format("%u", cfg->mem_size);
 	settings.Write("mem_size", mem_size_str);
 	settings.Write("model", wxString(models[machine.model].name_config, wxConvUTF8));
-	settings.Write("vram_size", cfg->vram_size != 0 ? wxString("2") : wxString("0"));
+	settings.Write("vram_size", wxString::Format("%u", cfg->vram_size));
 
 	settings.Write("sound_enabled", static_cast<long>(cfg->soundenabled));
 	settings.Write("refresh_rate", static_cast<long>(cfg->refresh));

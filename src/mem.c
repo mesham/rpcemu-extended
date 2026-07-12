@@ -97,7 +97,14 @@ static int vraddrlpos, vwaddrlpos;
 void mem_init(void)
 {
 	rom  = malloc(ROMSIZE);
-	vram = malloc(8 * 1024 * 1024); /*8 meg VRAM!*/
+
+	/* Allocate the VRAM at the largest supported size (16MB - the most that
+	   fits the Risc PC's 0x02000000 VRAM aperture). The active size is
+	   selected per-machine and only narrows mem_vrammask in mem_reset(). */
+	vram = malloc(16 * 1024 * 1024);
+	if (rom == NULL || vram == NULL) {
+		fatal("Unable to allocate memory for ROM/VRAM");
+	}
 	romb  = (uint8_t *) rom;
 	vramb = (uint8_t *) vram;
 }
@@ -123,6 +130,9 @@ mem_reset(uint32_t ramsize, uint32_t vram_size)
 
 		/* Allocate additional 128MB */
 		ram1 = realloc(ram1, 128 * 1024 * 1024);
+		if (ram1 == NULL) {
+			fatal("Unable to allocate memory for the second 128MB SIMM");
+		}
 		ramb1 = (uint8_t *) ram1;
 		memset(ram1, 0, 128 * 1024 * 1024);
 	} else {
@@ -143,6 +153,9 @@ mem_reset(uint32_t ramsize, uint32_t vram_size)
 
 	ram00 = realloc(ram00, ramsize / 2);
 	ram01 = realloc(ram01, ramsize / 2);
+	if (ram00 == NULL || ram01 == NULL) {
+		fatal("Unable to allocate memory for RAM");
+	}
 	ramb00 = (uint8_t *) ram00;
 	ramb01 = (uint8_t *) ram01;
 	memset(ram00, 0, ramsize / 2);

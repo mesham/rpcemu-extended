@@ -1083,7 +1083,10 @@ void callbackide(void)
                         return;
                 }
                 fseeko64(ide.hdfile[ide.drive], addr, SEEK_SET);
-                fwrite(ide.buffer, 512, 1, ide.hdfile[ide.drive]);
+                if (fwrite(ide.buffer, 512, 1, ide.hdfile[ide.drive]) != 1) {
+                        rpclog("IDE: sector write failed at offset %llu: %s\n",
+                               (unsigned long long) addr, strerror(errno));
+                }
                 ide_irq_raise();
                 ide.secount--;
                 if (ide.secount != 0) {
@@ -1134,7 +1137,11 @@ void callbackide(void)
                 memset(ide.buffer, 0, 512);
                 for (c=0;c<ide.secount;c++)
                 {
-                        fwrite(ide.buffer, 512, 1, ide.hdfile[ide.drive]);
+                        if (fwrite(ide.buffer, 512, 1, ide.hdfile[ide.drive]) != 1) {
+                                rpclog("IDE: format write failed: %s\n",
+                                       strerror(errno));
+                                break;
+                        }
                 }
                 ide.atastat = READY_STAT;
                 ide_irq_raise();

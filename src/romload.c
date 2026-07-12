@@ -51,6 +51,13 @@ typedef struct {
 	const char	*comment;	///< Comment that will be added to logfile
 } rom_patch_t;
 
+/* The VRAM-cap patches below overwrite the ROM's "MOVEQ R6, #<VRAM MB>"
+   instruction that limits how much VRAM the OS will use. The table encodes the
+   8MB form; on a machine fitted with 16MB VRAM we rewrite the immediate so the
+   OS opens up the extra bank (and the higher screen modes it enables). */
+#define VRAM_CAP_MOV_8MB	0x03a06008u	/* MOVEQ R6, #8  */
+#define VRAM_CAP_MOV_16MB	0x03a06010u	/* MOVEQ R6, #16 */
+
 static const rom_patch_t rom_patch[] = {
 	// Patching for 8MB VRAM
 	{ 0x138c0, { 0xe3a00402, 0xe2801004, 0xeb000128, 0x03a06002 }, 0x138cc, 0x03a06008, "8MB VRAM RISC OS 3.50" },
@@ -63,6 +70,7 @@ static const rom_patch_t rom_patch[] = {
 	{ 0x1473c, { 0xe3a00402, 0xe2801004, 0xeb0001ad, 0x03a06002 }, 0x14748, 0x03a06008, "8MB VRAM RISC OS 4.33" },
 	{ 0xe504,  { 0xe3a00402, 0xe2801004, 0xeb0001ad, 0x03a06002 }, 0xe510,  0x03a06008, "8MB VRAM RISC OS 4.37" },
 	{ 0xe248,  { 0xe3a00402, 0xe2801004, 0xeb0001ae, 0x03a06002 }, 0xe254,  0x03a06008, "8MB VRAM RISC OS 4.39" },
+	{ 0xe248,  { 0xe3a00402, 0xe2801004, 0xeb0001ad, 0x03a06002 }, 0xe254,  0x03a06008, "8MB VRAM RISC OS 4.39 (Adjust)" },
 	{ 0x8a764, { 0xe1a00001, 0xe2801004, 0xeb00000d, 0x03a06002 }, 0x8a770, 0x03a06008, "8MB VRAM RISC OS 6.02" },
 };
 
@@ -85,11 +93,27 @@ romload_patch(void)
 		    rom[(addr + 8) >> 2] == data[2] &&
 		    rom[(addr + 12) >> 2] == data[3])
 		{
+			uint32_t replace = p->replace;
+
+			// The VRAM-cap patches raise the OS's native 2MB VRAM limit.
+			// Match the cap to the VRAM actually fitted: leave it alone on
+			// 2MB (or no-VRAM) machines so the OS never addresses VRAM it
+			// hasn't got, and raise it to 16MB when 16MB is fitted.
+			if (replace == VRAM_CAP_MOV_8MB) {
+				if (config.vram_size < 8) {
+					continue;
+				}
+				if (config.vram_size >= 16) {
+					replace = VRAM_CAP_MOV_16MB;
+				}
+			}
+
 			// Patch the data
-			rom[p->addr_replace >> 2] = p->replace;
+			rom[p->addr_replace >> 2] = replace;
 
 			// Log the patch
-			rpclog("romload: ROM patch applied: %s\n", p->comment);
+			rpclog("romload: ROM patch applied: %s%s\n", p->comment,
+			       replace == VRAM_CAP_MOV_16MB ? " (raised to 16MB)" : "");
 		}
 	}
 }

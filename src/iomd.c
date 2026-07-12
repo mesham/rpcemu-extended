@@ -466,8 +466,10 @@ iomd_write(uint32_t addr, uint32_t val)
 		iomd.ectcr = val;
 		return;
 
-	case IOMD_0x0CC_DMAEXT: /* DMA external control (IOMD) */
-		if (iomd_type == IOMDType_IOMD) {
+	case IOMD_0x0CC_DMAEXT: /* DMA external control (IOMD/IOMD2) */
+		if (iomd_type == IOMDType_IOMD || iomd_type == IOMDType_IOMD2) {
+			/* IOMD2 retains the IOMD DMA external control register, so store
+			   it on write to stay consistent with the read path */
 			iomd.dmaext = val;
 			return;
 		}

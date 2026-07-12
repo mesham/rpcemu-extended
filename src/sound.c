@@ -153,6 +153,13 @@ sound_irq_update(void)
 		ramp = ram00;
 	}
 
+	/* The second SIMM (ram1) is only present on 256MB machines; on smaller
+	   configurations a DMA page resolving to that bank leaves ramp NULL, so
+	   skip the transfer rather than dereferencing a NULL pointer. */
+	if (ramp == NULL) {
+		return;
+	}
+
         for (c = start; c < end; c += 4)
         {
                 temp = ramp[((c + page) & mem_rammask) >> 2];

@@ -161,6 +161,8 @@ void MachineEditDialog::BuildUi()
 	}
 	vram_combo_->Append("None");
 	vram_combo_->Append("2 MB");
+	vram_combo_->Append("8 MB");
+	vram_combo_->Append("16 MB");
 
 	network_combo_->Append("Off");
 	network_combo_->Append("NAT");
@@ -626,7 +628,15 @@ void MachineEditDialog::LoadSettings()
 
 	wxString vram_text;
 	settings.Read("vram_size", &vram_text, "2");
-	vram_combo_->SetSelection(vram_text == "0" ? 0 : 1);
+	int vram_index = 1; /* "2 MB" */
+	if (vram_text == "0") {
+		vram_index = 0;
+	} else if (vram_text == "8") {
+		vram_index = 2;
+	} else if (vram_text == "16") {
+		vram_index = 3;
+	}
+	vram_combo_->SetSelection(vram_index);
 
 	long refresh = 60;
 	settings.Read("refresh_rate", &refresh, 60L);
@@ -690,6 +700,10 @@ void MachineEditDialog::SaveSettings()
 	const int vram_sel = std::max(0, vram_combo_->GetSelection());
 	const int model_sel = std::max(0, model_combo_->GetSelection());
 
+	/* VRAM combo: 0 = None, 1 = 2 MB, 2 = 8 MB, 3 = 16 MB */
+	static const int vram_sizes[] = { 0, 2, 8, 16 };
+	const int vram_mb = vram_sizes[vram_sel < 4 ? vram_sel : 1];
+
 	const wxString rom_dir = SelectedRomDir();
 
 	wxString network_type = "off";
@@ -706,7 +720,7 @@ void MachineEditDialog::SaveSettings()
 	settings.Write("rom_dir", rom_dir);
 	settings.Write("model", wxString::FromUTF8(models[model_sel].name_config));
 	settings.Write("mem_size", wxString::Format("%d", mem_values[mem_sel]));
-	settings.Write("vram_size", vram_sel == 0 ? "0" : "2");
+	settings.Write("vram_size", wxString::Format("%d", vram_mb));
 	settings.Write("refresh_rate", refresh_slider_->GetValue());
 	settings.Write("network_type", network_type);
 	settings.Write("bridgename", bridge_edit_->GetValue());
@@ -719,7 +733,7 @@ void MachineEditDialog::SaveSettings()
 	}
 
 	renamed_ = allow_rename_ && (new_name_ != original_name_);
-	ApplySavedSettingsToGlobalConfig(rom_dir, mem_values[mem_sel], vram_sel == 0 ? 0 : 8,
+	ApplySavedSettingsToGlobalConfig(rom_dir, mem_values[mem_sel], vram_mb,
 	                                 refresh_slider_->GetValue(),
 	                                 network_type == "nat" ? NetworkType_NAT :
 	                                 network_type == "ethernetbridging" ? NetworkType_EthernetBridging :
