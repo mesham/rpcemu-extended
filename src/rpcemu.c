@@ -81,7 +81,8 @@ const Model_Details models[] = {
 	{ "A7000",                           "A7000",  CPUModel_ARM7500,   IOMDType_ARM7500,   SuperIOType_FDC37C665GT, I2C_PCF8583 },
 	{ "A7000+ (experimental)",           "A7000+", CPUModel_ARM7500FE, IOMDType_ARM7500FE, SuperIOType_FDC37C665GT, I2C_PCF8583 },
 	{ "Risc PC - ARM810 (experimental)", "RPC810", CPUModel_ARM810,    IOMDType_IOMD,      SuperIOType_FDC37C665GT, I2C_PCF8583 },
-	{ "Phoebe (RPC2)",                   "Phoebe", CPUModel_SA110,     IOMDType_IOMD2,     SuperIOType_FDC37C672,   I2C_PCF8583 | I2C_SPD_DIMM0 }
+	{ "Phoebe (RPC2)",                   "Phoebe", CPUModel_SA110,     IOMDType_IOMD2,     SuperIOType_FDC37C672,   I2C_PCF8583 | I2C_SPD_DIMM0 },
+	{ "Risc PC - Kinetic (512MB)",       "Kinetic",CPUModel_SA110,     IOMDType_IOMD,      SuperIOType_FDC37C665GT, I2C_PCF8583 }
 };
 
 Config config = {
@@ -1243,6 +1244,19 @@ rpcemu_config_apply_new_settings(Config *new_config, Model new_model)
 	if (machine.model == Model_Phoebe) {
 		new_config->mem_size = 256;
 		new_config->vram_size = 4;
+	}
+
+	/* Only the Kinetic has the extra on-card SDRAM; every other model is
+	   limited to the 256MB the IOMD can address on the motherboard */
+	if (machine.model != Model_Kinetic && new_config->mem_size > 256) {
+		new_config->mem_size = 256;
+	}
+
+	/* The Kinetic only works reliably with the 2MB of VRAM the real hardware
+	   shipped with; larger VRAM sizes fault during boot with the 512MB SDRAM
+	   memory map, so clamp it here regardless of what the config requested. */
+	if (machine.model == Model_Kinetic) {
+		new_config->vram_size = 2;
 	}
 
 	if (new_config->mem_size != config.mem_size) {

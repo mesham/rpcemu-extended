@@ -49,6 +49,7 @@ extern uint32_t vwaddrls[1024],vwaddrphys[1024];
 #define ROMSIZE (8*1024*1024)
 
 extern uint32_t *ram00, *ram01, *ram1, *rom, *vram;
+extern uint32_t *sdram0, *sdram1; /**< Kinetic on-card SDRAM banks (128MB each) */
 extern uint8_t *romb;
 
 extern uint32_t tlbcache[0x100000];

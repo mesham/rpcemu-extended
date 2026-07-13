@@ -39,6 +39,8 @@
 uint32_t *ram00 = NULL; /**< Word pointer to SIMM 0 Bank 0 of physical RAM */
 uint32_t *ram01 = NULL; /**< Word pointer to SIMM 0 Bank 1 of physical RAM */
 uint32_t *ram1  = NULL; /**< Word pointer to SIMM 1 of physical RAM */
+uint32_t *sdram0 = NULL; /**< Word pointer to Kinetic on-card SDRAM bank 0 (128MB) */
+uint32_t *sdram1 = NULL; /**< Word pointer to Kinetic on-card SDRAM bank 1 (128MB) */
 uint32_t *rom   = NULL; /**< Word pointer to ROM */
 uint32_t *vram  = NULL; /**< Word pointer to Video RAM */
 
@@ -51,6 +53,11 @@ uint32_t mem_vrammask; /**< Mask used for VRAM to handle the repeating address s
 static uint8_t *ramb00 = NULL; /**< Byte pointer to SIMM 0 Bank 0 of physical RAM */
 static uint8_t *ramb01 = NULL; /**< Byte pointer to SIMM 0 Bank 1 of physical RAM */
 static uint8_t *ramb1  = NULL; /**< Byte pointer to SIMM 1 of physical RAM */
+static uint8_t *sdramb0 = NULL; /**< Byte pointer to Kinetic SDRAM bank 0 */
+static uint8_t *sdramb1 = NULL; /**< Byte pointer to Kinetic SDRAM bank 1 */
+
+#define SDRAM_BANK_SIZE  (128 * 1024 * 1024) /**< Kinetic SDRAM bank size */
+#define SDRAM_BANK_MASK  0x7ffffff            /**< 128MB address mask within an SDRAM bank */
 uint8_t *romb = NULL;          /**< Byte pointer to ROM */
 static uint8_t *vramb  = NULL; /**< Byte pointer to Video RAM */
 
@@ -118,12 +125,46 @@ void mem_init(void)
 void
 mem_reset(uint32_t ramsize, uint32_t vram_size)
 {
+	int have_sdram;
+
 	assert(ramsize >= 4); /* At least 4MB */
-	assert(ramsize <= 256); /* At most 256MB */
+	assert(ramsize <= 512); /* At most 512MB (Kinetic); 256MB on other models */
 	assert(((ramsize - 1) & ramsize) == 0); /* Must be a power of 2 */
+
+	/* Only the Kinetic StrongARM card carries the extra on-card SDRAM; clamp
+	   any other model back to the 256MB the motherboard IOMD can address. */
+	if (machine.model != Model_Kinetic && ramsize > 256) {
+		ramsize = 256;
+	}
+
+	/* Any RAM above the motherboard's 256MB lives in the two 128MB Kinetic
+	   SDRAM banks (physical 0x20000000 and 0x30000000). */
+	have_sdram = ramsize > 256;
 
 	/* Convert ramsize from bytes to megabytes */
 	ramsize *= (1024 * 1024);
+
+	if (have_sdram) {
+		/* The motherboard still provides its full 256MB; the surplus is SDRAM */
+		ramsize = 256 * 1024 * 1024;
+
+		sdram0 = realloc(sdram0, SDRAM_BANK_SIZE);
+		sdram1 = realloc(sdram1, SDRAM_BANK_SIZE);
+		if (sdram0 == NULL || sdram1 == NULL) {
+			fatal("Unable to allocate memory for the Kinetic SDRAM banks");
+		}
+		sdramb0 = (uint8_t *) sdram0;
+		sdramb1 = (uint8_t *) sdram1;
+		memset(sdram0, 0, SDRAM_BANK_SIZE);
+		memset(sdram1, 0, SDRAM_BANK_SIZE);
+	} else {
+		free(sdram0);
+		free(sdram1);
+		sdram0 = NULL;
+		sdram1 = NULL;
+		sdramb0 = NULL;
+		sdramb1 = NULL;
+	}
 
 	if (ramsize == (256 * 1024 * 1024)) {
 		ramsize = 128 * 1024 * 1024; /* 128MB for first SIMM */
@@ -163,9 +204,10 @@ mem_reset(uint32_t ramsize, uint32_t vram_size)
 
 	vraddrlpos = vwaddrlpos = 0;
 
-	if (machine.model == Model_Phoebe) {
-		/* 30 address bits are connected to IOMD2. This results in a
-		   physical memory map of 1G that repeats in the 4G address space */
+	if (machine.model == Model_Phoebe || machine.model == Model_Kinetic) {
+		/* 30 address bits are decoded (IOMD2 on Phoebe; the Kinetic card
+		   places its SDRAM at 0x20000000/0x30000000). This gives a physical
+		   memory map of 1G that repeats in the 4G address space. */
 		phys_space_mask = 0x3fffffff;
 	} else {
 		/* 29 address bits are connected to IOMD. This results in a
@@ -295,6 +337,49 @@ mem_phys_read32(uint32_t addr)
 		if (ram1 != NULL) {
 			return ram1[(addr & 0x7ffffff) >> 2];
 		}
+		break;
+
+	case 0x20000000: /* Kinetic SDRAM bank 0 */
+	case 0x21000000:
+	case 0x22000000:
+	case 0x23000000:
+	case 0x24000000:
+	case 0x25000000:
+	case 0x26000000:
+	case 0x27000000:
+	case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdram0 != NULL) {
+			return sdram0[(addr & SDRAM_BANK_MASK) >> 2];
+		}
+		break;
+
+	case 0x30000000: /* Kinetic SDRAM bank 1 */
+	case 0x31000000:
+	case 0x32000000:
+	case 0x33000000:
+	case 0x34000000:
+	case 0x35000000:
+	case 0x36000000:
+	case 0x37000000:
+	case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdram1 != NULL) {
+			return sdram1[(addr & SDRAM_BANK_MASK) >> 2];
+		}
+		break;
 	}
 	return 0;
 }
@@ -404,6 +489,55 @@ mem_phys_read8(uint32_t addr)
 #endif
 			return ramb1[addr & 0x7ffffff];
 		}
+		break;
+
+	case 0x20000000: /* Kinetic SDRAM bank 0 */
+	case 0x21000000:
+	case 0x22000000:
+	case 0x23000000:
+	case 0x24000000:
+	case 0x25000000:
+	case 0x26000000:
+	case 0x27000000:
+	case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdramb0 != NULL) {
+#ifdef _RPCEMU_BIG_ENDIAN
+			addr ^= 3;
+#endif
+			return sdramb0[addr & SDRAM_BANK_MASK];
+		}
+		break;
+
+	case 0x30000000: /* Kinetic SDRAM bank 1 */
+	case 0x31000000:
+	case 0x32000000:
+	case 0x33000000:
+	case 0x34000000:
+	case 0x35000000:
+	case 0x36000000:
+	case 0x37000000:
+	case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdramb1 != NULL) {
+#ifdef _RPCEMU_BIG_ENDIAN
+			addr ^= 3;
+#endif
+			return sdramb1[addr & SDRAM_BANK_MASK];
+		}
+		break;
 	}
 	return 0xff;
 }
@@ -469,6 +603,54 @@ mem_phys_read8_debug(uint32_t addr)
 			addr ^= 3;
 #endif
 			return ramb1[addr & 0x7ffffff];
+		}
+		break;
+
+	case 0x20000000: /* Kinetic SDRAM bank 0 */
+	case 0x21000000:
+	case 0x22000000:
+	case 0x23000000:
+	case 0x24000000:
+	case 0x25000000:
+	case 0x26000000:
+	case 0x27000000:
+	case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdramb0 != NULL) {
+#ifdef _RPCEMU_BIG_ENDIAN
+			addr ^= 3;
+#endif
+			return sdramb0[addr & SDRAM_BANK_MASK];
+		}
+		break;
+
+	case 0x30000000: /* Kinetic SDRAM bank 1 */
+	case 0x31000000:
+	case 0x32000000:
+	case 0x33000000:
+	case 0x34000000:
+	case 0x35000000:
+	case 0x36000000:
+	case 0x37000000:
+	case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdramb1 != NULL) {
+#ifdef _RPCEMU_BIG_ENDIAN
+			addr ^= 3;
+#endif
+			return sdramb1[addr & SDRAM_BANK_MASK];
 		}
 		break;
 
@@ -582,6 +764,48 @@ mem_phys_write32(uint32_t addr, uint32_t val)
 	case 0x1f000000:
 		if (ram1 != NULL) {
 			ram1[(addr & 0x7ffffff) >> 2] = val;
+		}
+		return;
+
+	case 0x20000000: /* Kinetic SDRAM bank 0 */
+	case 0x21000000:
+	case 0x22000000:
+	case 0x23000000:
+	case 0x24000000:
+	case 0x25000000:
+	case 0x26000000:
+	case 0x27000000:
+	case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdram0 != NULL) {
+			sdram0[(addr & SDRAM_BANK_MASK) >> 2] = val;
+		}
+		return;
+
+	case 0x30000000: /* Kinetic SDRAM bank 1 */
+	case 0x31000000:
+	case 0x32000000:
+	case 0x33000000:
+	case 0x34000000:
+	case 0x35000000:
+	case 0x36000000:
+	case 0x37000000:
+	case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdram1 != NULL) {
+			sdram1[(addr & SDRAM_BANK_MASK) >> 2] = val;
 		}
 		return;
 	}
@@ -703,6 +927,54 @@ mem_phys_write8(uint32_t addr, uint8_t val)
 			ramb1[addr & 0x7ffffff] = val;
 		}
 		return;
+
+	case 0x20000000: /* Kinetic SDRAM bank 0 */
+	case 0x21000000:
+	case 0x22000000:
+	case 0x23000000:
+	case 0x24000000:
+	case 0x25000000:
+	case 0x26000000:
+	case 0x27000000:
+	case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdramb0 != NULL) {
+#ifdef _RPCEMU_BIG_ENDIAN
+			addr ^= 3;
+#endif
+			sdramb0[addr & SDRAM_BANK_MASK] = val;
+		}
+		return;
+
+	case 0x30000000: /* Kinetic SDRAM bank 1 */
+	case 0x31000000:
+	case 0x32000000:
+	case 0x33000000:
+	case 0x34000000:
+	case 0x35000000:
+	case 0x36000000:
+	case 0x37000000:
+	case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+	case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+		if (sdramb1 != NULL) {
+#ifdef _RPCEMU_BIG_ENDIAN
+			addr ^= 3;
+#endif
+			sdramb1[addr & SDRAM_BANK_MASK] = val;
+		}
+		return;
 	}
 }
 
@@ -770,6 +1042,52 @@ readmemfl(uint32_t addr)
 				goto out;
 			}
 			break;
+
+		case 0x20000000: /* Kinetic SDRAM bank 0 */
+		case 0x21000000:
+		case 0x22000000:
+		case 0x23000000:
+		case 0x24000000:
+		case 0x25000000:
+		case 0x26000000:
+		case 0x27000000:
+		case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+			if (sdram0 != NULL) {
+				vradd(addr, &sdram0[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+				value = *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
+				goto out;
+			}
+			break;
+
+		case 0x30000000: /* Kinetic SDRAM bank 1 */
+		case 0x31000000:
+		case 0x32000000:
+		case 0x33000000:
+		case 0x34000000:
+		case 0x35000000:
+		case 0x36000000:
+		case 0x37000000:
+		case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+			if (sdram1 != NULL) {
+				vradd(addr, &sdram1[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+				value = *(const uint32_t *) (vraddrl[addr >> 12] + (addr & ~3u));
+				goto out;
+			}
+			break;
 		}
 	} else {
 		switch (addr & (phys_space_mask & 0xff000000)) {
@@ -803,6 +1121,48 @@ readmemfl(uint32_t addr)
 		case 0x1f000000:
 			if (ram1 != NULL) {
 				vradd(addr, &ram1[((addr & 0x7ffffff & ~0xfffu) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, addr);
+			}
+			break;
+
+		case 0x20000000: /* Kinetic SDRAM bank 0 */
+		case 0x21000000:
+		case 0x22000000:
+		case 0x23000000:
+		case 0x24000000:
+		case 0x25000000:
+		case 0x26000000:
+		case 0x27000000:
+		case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+			if (sdram0 != NULL) {
+				vradd(addr, &sdram0[((addr & SDRAM_BANK_MASK & ~0xfffu) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, addr);
+			}
+			break;
+
+		case 0x30000000: /* Kinetic SDRAM bank 1 */
+		case 0x31000000:
+		case 0x32000000:
+		case 0x33000000:
+		case 0x34000000:
+		case 0x35000000:
+		case 0x36000000:
+		case 0x37000000:
+		case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+			if (sdram1 != NULL) {
+				vradd(addr, &sdram1[((addr & SDRAM_BANK_MASK & ~0xfffu) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, addr);
 			}
 			break;
 		}
@@ -896,6 +1256,58 @@ readmemfb(uint32_t addr)
 				goto out;
 			}
 			break;
+
+		case 0x20000000: /* Kinetic SDRAM bank 0 */
+		case 0x21000000:
+		case 0x22000000:
+		case 0x23000000:
+		case 0x24000000:
+		case 0x25000000:
+		case 0x26000000:
+		case 0x27000000:
+		case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+			if (sdram0 != NULL) {
+				vradd(addr, &sdram0[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+#ifdef _RPCEMU_BIG_ENDIAN
+				addr ^= 3;
+#endif
+				value = *(const uint8_t *) (vraddrl[addr >> 12] + addr);
+				goto out;
+			}
+			break;
+
+		case 0x30000000: /* Kinetic SDRAM bank 1 */
+		case 0x31000000:
+		case 0x32000000:
+		case 0x33000000:
+		case 0x34000000:
+		case 0x35000000:
+		case 0x36000000:
+		case 0x37000000:
+		case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+			if (sdram1 != NULL) {
+				vradd(addr, &sdram1[((readmemcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, readmemcache2);
+#ifdef _RPCEMU_BIG_ENDIAN
+				addr ^= 3;
+#endif
+				value = *(const uint8_t *) (vraddrl[addr >> 12] + addr);
+				goto out;
+			}
+			break;
 		}
 	}
 
@@ -957,6 +1369,48 @@ writememfl(uint32_t addr, uint32_t val)
 				vwadd(addr, &ram1[((writememcache2 & 0x7ffffff) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writememcache2);
 			}
 			break;
+
+		case 0x20000000: /* Kinetic SDRAM bank 0 */
+		case 0x21000000:
+		case 0x22000000:
+		case 0x23000000:
+		case 0x24000000:
+		case 0x25000000:
+		case 0x26000000:
+		case 0x27000000:
+		case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+			if (sdram0 != NULL) {
+				vwadd(addr, &sdram0[((writememcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writememcache2);
+			}
+			break;
+
+		case 0x30000000: /* Kinetic SDRAM bank 1 */
+		case 0x31000000:
+		case 0x32000000:
+		case 0x33000000:
+		case 0x34000000:
+		case 0x35000000:
+		case 0x36000000:
+		case 0x37000000:
+		case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+			if (sdram1 != NULL) {
+				vwadd(addr, &sdram1[((writememcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writememcache2);
+			}
+			break;
 		}
 	}
 	mem_phys_write32(phys_addr, val);
@@ -1012,6 +1466,48 @@ writememfb(uint32_t addr, uint8_t val)
 		case 0x1f000000:
 			if (ram1 != NULL) {
 				vwadd(addr, &ram1[((writemembcache2 & 0x7ffffff) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writemembcache2);
+			}
+			break;
+
+		case 0x20000000: /* Kinetic SDRAM bank 0 */
+		case 0x21000000:
+		case 0x22000000:
+		case 0x23000000:
+		case 0x24000000:
+		case 0x25000000:
+		case 0x26000000:
+		case 0x27000000:
+		case 0x28000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x29000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2a000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2b000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2c000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2d000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2e000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x2f000000: /* 128MB bank aliases on undecoded A27 */
+			if (sdram0 != NULL) {
+				vwadd(addr, &sdram0[((writemembcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writemembcache2);
+			}
+			break;
+
+		case 0x30000000: /* Kinetic SDRAM bank 1 */
+		case 0x31000000:
+		case 0x32000000:
+		case 0x33000000:
+		case 0x34000000:
+		case 0x35000000:
+		case 0x36000000:
+		case 0x37000000:
+		case 0x38000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x39000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3a000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3b000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3c000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3d000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3e000000: /* 128MB bank aliases on undecoded A27 */
+		case 0x3f000000: /* 128MB bank aliases on undecoded A27 */
+			if (sdram1 != NULL) {
+				vwadd(addr, &sdram1[((writemembcache2 & SDRAM_BANK_MASK) - (uintptr_t) (addr & ~0xfffu)) >> 2], 0, writemembcache2);
 			}
 			break;
 		}

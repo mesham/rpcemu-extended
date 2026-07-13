@@ -1,8 +1,8 @@
 # RPCEmu – Spork Edition
 
 An extended fork of **[RPCEmu](http://www.marutan.net/rpcemu/)**, the open-source
-emulator for Acorn Risc PC and A7000 machines. This edition runs on **Linux and
-Windows** with a wxWidgets front-end, multi-machine configuration, integrated
+emulator for Acorn Risc PC and A7000 machines. This edition runs on **Linux, Windows
+and macOS** with a wxWidgets front-end, multi-machine configuration, integrated
 debugger and machine inspector, Access/ShareFS networking, full FPA emulation, and
 modern CMake-based build tooling.
 
@@ -12,7 +12,8 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 
 ## Highlights
 
-- **Cross-platform** — runs on **Linux** (amd64 + arm64) and **Windows** (amd64). The x86-64 dynamic recompiler works on both, so Windows gets full-speed emulation too. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
+- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler works on Linux, Windows, and Intel Macs, so those get full-speed emulation. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
+- **Kinetic StrongARM (512MB)** — emulates the Acorn Risc PC **Kinetic** StrongARM processor card and its full **512MB** of RAM: the 256MB the motherboard IOMD can address, plus two 128MB on-card SDRAM banks. Boots RISC OS 5 straight to the desktop.
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
 - **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
 - **Dual HostFS drives** — per-machine **HostFS** plus a common **Shared** drive (`shared/`) visible to all machines.
@@ -90,13 +91,14 @@ everything self-contained in its own folder.
 
 ### Supported systems
 
-Each GitHub release ships prebuilt packages for three targets:
+Each GitHub release ships prebuilt packages for four targets:
 
 | Package | Platform | CPU core |
 | --- | --- | --- |
 | `rpcemu_*_amd64.deb` / `_linux_amd64.tar.gz` | Linux x86-64 | Recompiler (full speed) |
 | `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (no ARM dynarec yet) |
 | `rpcemu_*_windows_amd64.zip` | Windows x64 (10/11) | Recompiler (full speed) |
+| `rpcemu_*_macos_universal.tar.gz` | macOS (Intel + Apple Silicon) | Universal binary — recompiler on Intel, interpreter on Apple Silicon |
 
 **Linux** packages are built on **Ubuntu 24.04 LTS**; being dynamically linked, they run
 on distributions whose system libraries are that version or newer:
@@ -164,6 +166,22 @@ It defaults to the recompiler (`rpcemu-recompiler.exe`); pass `--interpreter` fo
 interpreter build. Runtime DLLs are bundled into the staged folder automatically. This
 is exactly what the `windows-amd64` CI job runs.
 
+### Build for macOS
+
+`build-macos.sh` produces a **universal** binary — the Intel (x86-64) slice includes the
+dynamic recompiler, the Apple Silicon (arm64) slice is the interpreter — fused with
+`lipo`. Dependencies come from Homebrew. Build each slice, then fuse and package:
+
+```bash
+./build-macos.sh --arch x86_64   # Intel slice (recompiler)
+./build-macos.sh --arch arm64    # Apple Silicon slice (interpreter)
+./build-macos.sh --fuse --zip    # lipo into one universal binary + releases/macos/*.tar.gz
+```
+
+On a single machine each slice is built for its own architecture (the other builds under
+Rosetta); the `macos-x86_64`, `macos-arm64`, and `macos-universal` CI jobs do exactly
+this and fuse the result.
+
 ### Run
 
 ```bash
@@ -225,8 +243,8 @@ Each machine is defined by a `.cfg` file in `configs/` and a data directory unde
 
 | Setting | Options |
 | --- | --- |
-| **Model** | RiscPC ARM610/710/810/StrongARM, A7000, A7000+ (experimental), Phoebe (experimental) |
-| **RAM** | 4, 8, 16, 32, 64, 128, or 256 MB |
+| **Model** | RiscPC ARM610/710/810/StrongARM, Kinetic StrongARM (512MB), A7000, A7000+ (experimental), Phoebe (experimental) |
+| **RAM** | 4, 8, 16, 32, 64, 128, 256 MB, or 512 MB (Kinetic) |
 | **VRAM** | None or 2 MB |
 | **ROM** | Subdirectory under `roms/` containing ROM components |
 | **Refresh rate** | 20–100 Hz |
@@ -332,6 +350,7 @@ how the JIT is built and when it falls back to interpretation.
 
 ## Differences from upstream RPCEmu
 
+- Kinetic StrongARM processor-card emulation with 512MB RAM (two on-card SDRAM banks), booting RISC OS 5 to the desktop
 - wxWidgets front-end with machine selector, toolbar, and integrated debugger
 - Multi-machine configuration with isolated per-machine storage
 - Quick machine switching and recent-machines menu
@@ -348,7 +367,7 @@ how the JIT is built and when it falls back to interpretation.
 - Machine Inspector with disassembly and memory browser
 - Dynarec debugger hooks for consistent breakpoint/watchpoint behaviour
 - Robustness & memory-safety hardening: bounds-checked HFE/ADF disc-image and HostFS input handling, FPA faults raised as undefined instructions rather than aborting the emulator, and a fixed use-after-free on GUI shutdown
-- CMake build system, cross-platform: Linux (amd64 and arm64) and Windows (amd64, MinGW-w64)
+- CMake build system, cross-platform: Linux (amd64 and arm64), Windows (amd64, MinGW-w64), and macOS (universal — Intel + Apple Silicon)
 
 ---
 

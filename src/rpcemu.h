@@ -178,6 +178,7 @@ typedef enum {
 	Model_A7000plus,
 	Model_RPCARM810,
 	Model_Phoebe,
+	Model_Kinetic,
 	Model_MAX         /**< Always last entry */
 } Model;
 

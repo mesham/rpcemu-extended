@@ -773,9 +773,17 @@ iomd_read(uint32_t addr)
 		return 0;
 
         case IOMD_0x180_SD0CURA: /* Sound DMA 0 CurA */
-        case IOMD_0x184_SD0ENDA: /* Sound DMA 0 EndA */
         case IOMD_0x188_SD0CURB: /* Sound DMA 0 CurB */
         case IOMD_0x18C_SD0ENDB: /* Sound DMA 0 EndB */
+                return 0;
+        case IOMD_0x184_SD0ENDA: /* Sound DMA 0 EndA */
+                /* The RISC OS 5 Kinetic HAL borrows this register as scratch:
+                   it stashes the result of probing the on-card SDRAM here and
+                   reads it back to set its "IsKinetic" flag. On a Kinetic the
+                   register must therefore return the value last written to it. */
+                if (machine.model == Model_Kinetic) {
+                        return soundaddr[1];
+                }
                 return 0;
         case IOMD_0x194_SD0ST: /* Sound DMA 0 Status */
                 return iomd.sndstat;

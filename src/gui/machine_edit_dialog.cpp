@@ -155,7 +155,7 @@ void MachineEditDialog::BuildUi()
 		model_combo_->Append(wxString::FromUTF8(models[i].name_gui));
 	}
 
-	const int mem_values[] = {4, 8, 16, 32, 64, 128, 256};
+	const int mem_values[] = {4, 8, 16, 32, 64, 128, 256, 512};
 	for (int mem : mem_values) {
 		mem_combo_->Append(wxString::Format("%d MB", mem));
 	}
@@ -316,6 +316,23 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	char detail[64] = "";
 	char msg[512] = "";
 	const Model model = CurrentModelSelection();
+
+	/* The Kinetic is defined by its 512MB (2 on-card SDRAM banks) and only
+	   supports 2MB VRAM (larger sizes fault during boot with the 512MB SDRAM
+	   map), so lock both selectors for that model. 512MB is Kinetic-only. */
+	if (model == Model_Kinetic) {
+		mem_combo_->SetSelection(7);  /* "512 MB" (index into mem_values[]) */
+		mem_combo_->Enable(false);
+		vram_combo_->SetSelection(1); /* "2 MB" */
+		vram_combo_->Enable(false);
+	} else {
+		if (mem_combo_->GetSelection() == 7) {
+			mem_combo_->SetSelection(6); /* 512MB is Kinetic-only -> drop to 256MB */
+		}
+		mem_combo_->Enable(true);
+		vram_combo_->Enable(true);
+	}
+
 	const wxString rom_dir = SelectedRomDir();
 	const wxScopedCharBuffer rom_dir_utf8 = rom_dir.utf8_str();
 
@@ -618,8 +635,8 @@ void MachineEditDialog::LoadSettings()
 
 	long mem_size = 64;
 	settings.Read("mem_size", &mem_size, 64L);
-	const int mem_values[] = {4, 8, 16, 32, 64, 128, 256};
-	for (int i = 0; i < 7; ++i) {
+	const int mem_values[] = {4, 8, 16, 32, 64, 128, 256, 512};
+	for (int i = 0; i < static_cast<int>(sizeof(mem_values) / sizeof(mem_values[0])); ++i) {
 		if (static_cast<long>(mem_values[i]) == mem_size) {
 			mem_combo_->SetSelection(i);
 			break;
@@ -695,14 +712,20 @@ void MachineEditDialog::SaveSettings()
 		}
 	}
 
-	const int mem_values[] = {4, 8, 16, 32, 64, 128, 256};
+	const int mem_values[] = {4, 8, 16, 32, 64, 128, 256, 512};
 	const int mem_sel = std::max(0, mem_combo_->GetSelection());
 	const int vram_sel = std::max(0, vram_combo_->GetSelection());
 	const int model_sel = std::max(0, model_combo_->GetSelection());
 
 	/* VRAM combo: 0 = None, 1 = 2 MB, 2 = 8 MB, 3 = 16 MB */
 	static const int vram_sizes[] = { 0, 2, 8, 16 };
-	const int vram_mb = vram_sizes[vram_sel < 4 ? vram_sel : 1];
+	int vram_mb = vram_sizes[vram_sel < 4 ? vram_sel : 1];
+
+	/* The Kinetic only supports 2MB VRAM - larger sizes fault during boot with
+	   the 512MB SDRAM memory map, so force 2MB regardless of the selection. */
+	if (model_sel == Model_Kinetic) {
+		vram_mb = 2;
+	}
 
 	const wxString rom_dir = SelectedRomDir();
 

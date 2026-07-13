@@ -459,6 +459,8 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		cfg->mem_size = 128;
 	} else if (!strcmp(p, "256")) {
 		cfg->mem_size = 256;
+	} else if (!strcmp(p, "512")) {
+		cfg->mem_size = 512;
 	} else {
 		cfg->mem_size = 16;
 	}
@@ -502,6 +504,11 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	if (model == Model_Phoebe) {
 		cfg->mem_size = 256;
 		cfg->vram_size = 4;
+	}
+	/* The Kinetic only boots reliably with 2MB VRAM (larger sizes fault with
+	   the 512MB SDRAM map), so clamp it even if the config file overrode it. */
+	if (model == Model_Kinetic) {
+		cfg->vram_size = 2;
 	}
 
 	machine_cmos_sync(cfg->name, model, cfg->mem_size, cfg->vram_size);

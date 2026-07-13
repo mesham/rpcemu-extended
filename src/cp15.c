@@ -119,7 +119,11 @@ cp15_tlb_invalidate_physical(uint32_t addr)
 	int c;
 
 	for (c = 0; c < 1024; c++) {
-		if ((vwaddrphys[c] & 0x1f000000) == addr) {
+		/* Skip unused ring slots: cp15_reset() invalidates vwaddrls[] (to
+		   0xffffffff) but leaves vwaddrphys[] stale, so a stale phys entry can
+		   still match here after a reset - indexing vwaddrl[] with the invalid
+		   0xffffffff page marker would be a wild out-of-bounds write. */
+		if (vwaddrls[c] != 0xffffffff && (vwaddrphys[c] & 0x1f000000) == addr) {
 			vwaddrl[vwaddrls[c]] = 0xffffffff;
 			vwaddrls[c] = 0xffffffff;
 			vwaddrphys[c] = 0xffffffff;
@@ -235,7 +239,10 @@ cp15_write(uint32_t opcode, uint32_t val)
 
 	case 2: /* Translation Table Base */
 		cp15.translation_table = val & ~0x3fffu;
-		switch (cp15.translation_table & 0x1f000000) {
+		/* Decode 30 address bits so the Kinetic SDRAM banks (0x20000000 and
+		   0x30000000) are distinguished; for other models the page tables
+		   never live above 0x1fffffff, so the wider mask is harmless. */
+		switch (cp15.translation_table & 0x3f000000) {
 		case 0x02000000: /* VRAM */
 			tlbram = vram;
 			tlbrammask = mem_vrammask >> 2;
@@ -263,6 +270,44 @@ cp15_write(uint32_t opcode, uint32_t val)
 		case 0x1e000000:
 		case 0x1f000000:
 			tlbram = ram1;
+			tlbrammask = 0x7ffffff >> 2;
+			break;
+		case 0x20000000: /* Kinetic SDRAM bank 0 (128MB, aliases to 0x2f) */
+		case 0x21000000:
+		case 0x22000000:
+		case 0x23000000:
+		case 0x24000000:
+		case 0x25000000:
+		case 0x26000000:
+		case 0x27000000:
+		case 0x28000000:
+		case 0x29000000:
+		case 0x2a000000:
+		case 0x2b000000:
+		case 0x2c000000:
+		case 0x2d000000:
+		case 0x2e000000:
+		case 0x2f000000:
+			tlbram = sdram0;
+			tlbrammask = 0x7ffffff >> 2;
+			break;
+		case 0x30000000: /* Kinetic SDRAM bank 1 (128MB, aliases to 0x3f) */
+		case 0x31000000:
+		case 0x32000000:
+		case 0x33000000:
+		case 0x34000000:
+		case 0x35000000:
+		case 0x36000000:
+		case 0x37000000:
+		case 0x38000000:
+		case 0x39000000:
+		case 0x3a000000:
+		case 0x3b000000:
+		case 0x3c000000:
+		case 0x3d000000:
+		case 0x3e000000:
+		case 0x3f000000:
+			tlbram = sdram1;
 			tlbrammask = 0x7ffffff >> 2;
 			break;
 		}
@@ -585,7 +630,10 @@ getpccache(uint32_t addr)
 	/* Invalidate write pointer for this page - so we can handle code modification */
 	vwaddrl[addr >> 12] = 0xffffffff;
 
-	switch (phys_addr & 0x1f000000) {
+	/* Decode 30 address bits so the Kinetic SDRAM banks (0x20000000 and
+	   0x30000000) are reachable for instruction fetch; for other models the
+	   PC never lives above 0x1fffffff, so the wider mask is harmless. */
+	switch (phys_addr & 0x3f000000) {
 	case 0x00000000: /* ROM */
 		return &rom[((uintptr_t) (phys_addr & 0x7ff000) - (uintptr_t) addr) >> 2];
 	case 0x02000000: /* VRAM */
@@ -611,6 +659,47 @@ getpccache(uint32_t addr)
 		if (ram1 != NULL) {
 			return &ram1[((uintptr_t) (phys_addr & 0x7ffffff) - (uintptr_t) addr) >> 2];
 		}
+		break;
+	case 0x20000000: /* Kinetic SDRAM bank 0 (128MB, aliases to 0x2f) */
+	case 0x21000000:
+	case 0x22000000:
+	case 0x23000000:
+	case 0x24000000:
+	case 0x25000000:
+	case 0x26000000:
+	case 0x27000000:
+	case 0x28000000:
+	case 0x29000000:
+	case 0x2a000000:
+	case 0x2b000000:
+	case 0x2c000000:
+	case 0x2d000000:
+	case 0x2e000000:
+	case 0x2f000000:
+		if (sdram0 != NULL) {
+			return &sdram0[((uintptr_t) (phys_addr & 0x7ffffff) - (uintptr_t) addr) >> 2];
+		}
+		break;
+	case 0x30000000: /* Kinetic SDRAM bank 1 (128MB, aliases to 0x3f) */
+	case 0x31000000:
+	case 0x32000000:
+	case 0x33000000:
+	case 0x34000000:
+	case 0x35000000:
+	case 0x36000000:
+	case 0x37000000:
+	case 0x38000000:
+	case 0x39000000:
+	case 0x3a000000:
+	case 0x3b000000:
+	case 0x3c000000:
+	case 0x3d000000:
+	case 0x3e000000:
+	case 0x3f000000:
+		if (sdram1 != NULL) {
+			return &sdram1[((uintptr_t) (phys_addr & 0x7ffffff) - (uintptr_t) addr) >> 2];
+		}
+		break;
 	}
 	fatal("Bad PC %08x %08x\n", addr, phys_addr);
 }
