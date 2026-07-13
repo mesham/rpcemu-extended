@@ -332,10 +332,15 @@ network_nat_tx(uint32_t errbuf, uint32_t mbufs, uint32_t dest, uint32_t src, uin
 	// Write to capture file for debug
 	write_packet(nat.capture, nat.buffer, packet_length);
 
-	// Check if this is a broadcast to relay to host network
-	broadcast_relay_tx(nat.buffer, packet_length);
-
-	slirp_input(nat.slirp, nat.buffer, packet_length);
+	// Offer the packet to the Access+/ShareFS broadcast relay. If it returns
+	// non-zero it has taken full ownership of the packet (an external unicast
+	// relayed to the host network); passing it to SLiRP as well would send a
+	// duplicate out of SLiRP's NAT with a masqueraded source port, splitting
+	// the ShareFS conversation across two ports and stalling disc opens.
+	// Broadcasts and non-Access traffic return zero and still go to SLiRP.
+	if (!broadcast_relay_tx(nat.buffer, packet_length)) {
+		slirp_input(nat.slirp, nat.buffer, packet_length);
+	}
 
 	return 0;
 }
