@@ -1,4 +1,5 @@
 #include <memory>
+#include <vector>
 
 #include "main_frame.h"
 
@@ -1018,45 +1019,37 @@ void MainFrame::PostVideoUpdate(VideoUpdate update)
 		return;
 	}
 
-	// During shutdown the UI thread stops processing events (it blocks in
-	// EmulatorHost::Join() while tearing the emulator down), so a queued
-	// CallAfter would never run. Blocking on it here would deadlock the VIDC
-	// thread and prevent it from being joined. Skip the frame entirely — there
-	// is nothing left to draw, and update.buffer points into emulator memory
-	// that is about to be freed.
+	// Called from the VIDC worker thread. update.buffer points into emulator
+	// memory that the worker reuses as soon as this returns (and frees on
+	// shutdown), so the raw pointer cannot be handed to a deferred GUI callback.
+	//
+	// The previous design blocked this thread on a CallAfter handshake until
+	// the GUI thread had consumed the frame. That coupling was racy on Windows:
+	// if the event loop was not yet servicing CallAfter, the worker blocked
+	// (holding video_mutex) on a callback that could not run, leaving a window
+	// with menus but a permanently blank display. Instead, copy the frame into
+	// a heap buffer owned by the posted work and return immediately - the VIDC
+	// thread never waits on the GUI thread, so the display can never stall.
 	if (quited) {
 		return;
 	}
 
-	struct SyncState {
-		VideoUpdate update;
-		std::mutex mutex;
-		std::condition_variable cv;
-		bool done = false;
-	};
-
-	auto state = std::make_shared<SyncState>();
-	state->update = update;
-
-	CallAfter([this, state]() {
-		if (panel_ != nullptr) {
-			panel_->ApplyVideoUpdate(state->update);
-		}
-		{
-			std::lock_guard<std::mutex> lock(state->mutex);
-			state->done = true;
-		}
-		state->cv.notify_one();
-	});
-
-	// Bound the wait so that if shutdown begins after the check above (quited
-	// set while we are already blocked here), this thread still wakes and
-	// returns rather than deadlocking against a UI thread stuck in Join().
-	// quited is written once, monotonically, so a plain read is sufficient.
-	std::unique_lock<std::mutex> lock(state->mutex);
-	while (!state->done && !quited) {
-		state->cv.wait_for(lock, std::chrono::milliseconds(50));
+	const size_t npixels = (size_t) update.xsize * (size_t) update.ysize;
+	if (update.buffer == nullptr || npixels == 0) {
+		return;
 	}
+
+	auto pixels = std::make_shared<std::vector<uint32_t>>(
+	    update.buffer, update.buffer + npixels);
+	VideoUpdate copy = update;
+	copy.buffer = pixels->data();
+
+	CallAfter([this, copy, pixels]() {
+		(void) pixels; // keeps copy.buffer alive until the frame is applied
+		if (panel_ != nullptr) {
+			panel_->ApplyVideoUpdate(copy);
+		}
+	});
 }
 
 void MainFrame::PostMoveHostMouse(const MouseMoveUpdate &update)
