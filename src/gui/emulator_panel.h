@@ -19,6 +19,8 @@ public:
 	void FocusPanel();
 	void SetFullScreen(bool full_screen);
 	void SetIntegerScaling(bool integer_scaling);
+	void SetFitToWindow(bool fit_to_window);
+	void ForceRedraw();
 	bool SaveScreenshot(const wxString &path);
 
 private:
@@ -46,6 +48,7 @@ private:
 
 	EmulatorHost &emulator_;
 	wxImage display_image_;
+	wxBitmap display_bitmap_;	/**< Cached bitmap of display_image_, rebuilt only when the frame changes */
 	int image_width_ = 640;
 	int image_height_ = 480;
 	int double_size_ = 0;
@@ -60,6 +63,7 @@ private:
 	int last_press_button_ = 0;
 	std::chrono::steady_clock::time_point last_press_time_{};
 	bool integer_scaling_ = false;
+	bool fit_to_window_ = false;
 	bool full_screen_ = false;
 	std::chrono::steady_clock::time_point user_pointer_until_{};
 

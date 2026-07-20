@@ -215,6 +215,7 @@ typedef struct {
 	int cpu_idle;		/**< Attempt to reduce CPU usage */
 	int show_fullscreen_message;	/**< Show explanation of how to leave fullscreen, on entering fullscreen */
 	int integer_scaling;	/**< Use integer scaling (2x, 3x) for sharp pixels instead of smooth scaling */
+	int fit_to_window;	/**< Scale the display to fit a freely-resizable window, preserving aspect ratio */
 	char *network_capture;		///< Path to capture network traffic file, or NULL to disable
 	int vnc_enabled;	/**< Enable the built-in VNC server */
 	int vnc_port;		/**< Port for the VNC server (default 5900) */
@@ -223,6 +224,7 @@ typedef struct {
 	char hostcmd_socket[512];	/**< Socket spec: empty = <datadir>hostcmd.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
 	int debug_enabled;	/**< Enable the DebugCmd control socket (host inspects/controls the emulated CPU) */
 	char debug_socket[512];	/**< Socket spec: empty = <datadir>rpcemu-debug.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
+	Model model;		/**< Configured machine model. Applied to machine.model on load; kept here so the configured model persists independently of the running machine.model (fixes model edits to a running machine being lost on save). */
 } Config;
 
 extern Config config;
@@ -283,6 +285,11 @@ extern void fdc_activity_increment(void);
    needed to be overridden, there is a generic version in rpc-machdep.c */
 extern const char *rpcemu_get_datadir(void);
 extern const char *rpcemu_get_resourcedir(void);
+
+/* Host display geometry, used to advertise a matching native mode via the
+   synthesised monitor EDID (see romload.c / edid.c). */
+extern void rpcemu_set_host_display(unsigned width, unsigned height);
+extern int rpcemu_get_host_display(unsigned *width, unsigned *height);
 extern void rpcemu_set_datadir(const char *path);
 extern void rpcemu_set_resourcedir(const char *path);
 extern const char *rpcemu_get_machine_datadir(void);

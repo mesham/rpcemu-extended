@@ -34,6 +34,7 @@
 #include "rpcemu.h"
 #include "mem.h"
 #include "romload.h"
+#include "edid.h"
 
 #define MAXROMS 16 /**< Allow up to this many files for a romimage to be broken up into */
 #define ROM_PROBE_SCAN_BYTES (256u * 1024u)
@@ -57,6 +58,16 @@ typedef struct {
    OS opens up the extra bank (and the higher screen modes it enables). */
 #define VRAM_CAP_MOV_8MB	0x03a06008u	/* MOVEQ R6, #8  */
 #define VRAM_CAP_MOV_16MB	0x03a06010u	/* MOVEQ R6, #16 */
+
+/* RISC OS 5's display driver refuses to program any screen mode whose pixel
+   rate is above the real VIDC20 ceiling of 110 MHz, and the desktop's mode
+   chooser only lists modes that clear that check. RPCEmu draws the screen in
+   software and has no pixel clock at all, so on the emulator this bound only
+   serves to hide the large modes a monitor definition could otherwise offer.
+   The driver stores the ceiling as one pixel-rate constant (in kHz); we raise
+   it so the mode list reflects what the emulator can genuinely display. */
+#define DISPLAY_CLOCK_CEIL_KHZ		110000u		/* 110 MHz, as stored in the ROM */
+#define DISPLAY_CLOCK_CEIL_UNCAPPED	0x00ffffffu	/* ~16 GHz: no mode ever reaches it */
 
 static const rom_patch_t rom_patch[] = {
 	// Patching for 8MB VRAM
@@ -116,6 +127,106 @@ romload_patch(void)
 			       replace == VRAM_CAP_MOV_16MB ? " (raised to 16MB)" : "");
 		}
 	}
+}
+
+/**
+ * Raise the display driver's pixel-rate ceiling on RISC OS 5 images.
+ *
+ * The 110 MHz limit lives in the driver as a single kHz constant. Rather than
+ * pin it to a build-specific address (it drifts between ROM revisions), we take
+ * advantage of the fact that this exact value does not otherwise appear in a
+ * RISC OS 5 image: we sweep the loaded ROM and only rewrite it when it is found
+ * exactly once, which keeps us from disturbing an unrelated word. ROMs that do
+ * not contain the constant at all (RISC OS 3/4, NCOS) are left completely
+ * untouched.
+ *
+ * @param rom_bytes Number of bytes actually loaded into the ROM image
+ */
+static void
+romload_uncap_display_clock(size_t rom_bytes)
+{
+	const size_t words = rom_bytes / 4;
+	size_t match = 0;
+	size_t hits = 0;
+	size_t i;
+
+	for (i = 0; i < words; i++) {
+		if (rom[i] == DISPLAY_CLOCK_CEIL_KHZ) {
+			match = i;
+			hits++;
+		}
+	}
+
+	if (hits == 1) {
+		rom[match] = DISPLAY_CLOCK_CEIL_UNCAPPED;
+		rpclog("romload: ROM patch applied: display pixel-rate ceiling lifted (word at 0x%06x)\n",
+		       (unsigned) (match * 4));
+	}
+}
+
+/* Bounds for the advertised native mode, so an unusually large or unset host
+   display can't ask RISC OS to build something silly. */
+#define EDID_NATIVE_MAX_X	2560u
+#define EDID_NATIVE_MAX_Y	1440u
+#define EDID_NATIVE_DEFAULT_X	1920u
+#define EDID_NATIVE_DEFAULT_Y	1080u
+#define EDID_NATIVE_HZ		60u
+
+/**
+ * Replace the video driver's built-in (empty) monitor EDID with one that
+ * advertises a real mode ladder, so a machine set to MonitorType Auto detects a
+ * capable monitor instead of falling back to a minimal default. The preferred
+ * (native) mode tracks the host display where the front-end has reported it.
+ *
+ * The block is located by content, not address: we scan the loaded ROM for the
+ * single structurally-valid EDID 1.x block it contains. RISC OS 3/4 images have
+ * none and are left untouched.
+ *
+ * @param rom_bytes Number of bytes actually loaded into the ROM image
+ */
+static void
+romload_inject_edid(size_t rom_bytes)
+{
+	const size_t words = rom_bytes / 4;
+	uint8_t *rb = (uint8_t *) rom;
+	size_t found = (size_t) -1;
+	size_t hits = 0;
+	unsigned native_x, native_y;
+	uint8_t base[EDID_BLOCK_SIZE];
+	uint8_t block[EDID_BLOCK_SIZE];
+	size_t byte;
+
+	/* Word-aligned scan (the table is word-aligned in the driver). */
+	for (byte = 0; byte + EDID_BLOCK_SIZE <= words * 4; byte += 4) {
+		if (edid_block_is_valid(&rb[byte])) {
+			found = byte;
+			hits++;
+		}
+	}
+
+	if (hits != 1) {
+		return;		/* Not a single unambiguous block: leave well alone. */
+	}
+
+	/* Choose the native mode: match the host display if the front-end has
+	   published it, else a sensible high default. Clamp to keep it sane. */
+	if (!rpcemu_get_host_display(&native_x, &native_y)) {
+		native_x = EDID_NATIVE_DEFAULT_X;
+		native_y = EDID_NATIVE_DEFAULT_Y;
+	}
+	if (native_x > EDID_NATIVE_MAX_X) {
+		native_x = EDID_NATIVE_MAX_X;
+	}
+	if (native_y > EDID_NATIVE_MAX_Y) {
+		native_y = EDID_NATIVE_MAX_Y;
+	}
+
+	memcpy(base, &rb[found], EDID_BLOCK_SIZE);
+	edid_build_from_base(block, base, native_x, native_y, EDID_NATIVE_HZ);
+	memcpy(&rb[found], block, EDID_BLOCK_SIZE);
+
+	rpclog("romload: ROM patch applied: monitor EDID replaced, native %ux%u@%u (block at 0x%06x)\n",
+	       native_x, native_y, EDID_NATIVE_HZ, (unsigned) found);
 }
 
 /**
@@ -629,6 +740,13 @@ void loadroms(void)
 
 	/* Patch ROM  */
 	romload_patch();
+
+	/* Free the desktop from the emulated-away VIDC20 pixel-clock limit so the
+	   larger monitor-definition modes become selectable. */
+	romload_uncap_display_clock((size_t) pos);
+
+	/* Advertise a capable monitor to MonitorType Auto via a populated EDID. */
+	romload_inject_edid((size_t) pos);
 
 	/* Patch Netstation versions of NCOS to bypass the results of the POST that we currently fail */
 	/* NCOS 0.10 */

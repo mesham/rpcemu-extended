@@ -1,6 +1,7 @@
 #include "emulator_panel.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <cstring>
 
 #include "main_frame.h"
@@ -113,6 +114,25 @@ void EmulatorPanel::SetIntegerScaling(bool integer_scaling)
 	Refresh(false);
 }
 
+void EmulatorPanel::SetFitToWindow(bool fit_to_window)
+{
+	fit_to_window_ = fit_to_window;
+	ResizeToHostDisplay();
+	CalculateScaling();
+	Refresh(false);
+}
+
+/* Force an immediate, full repaint from the retained frame. Used after
+   transitions (full-screen enter/exit, scaling-mode change) where the guest
+   desktop may be static and would otherwise send no fresh video update to
+   trigger a paint - leaving a stale or blank panel. */
+void EmulatorPanel::ForceRedraw()
+{
+	CalculateScaling();
+	Refresh(false);
+	Update();
+}
+
 bool EmulatorPanel::SaveScreenshot(const wxString &path)
 {
 	if (!display_image_.IsOk() || image_width_ <= 0 || image_height_ <= 0) {
@@ -138,7 +158,7 @@ void EmulatorPanel::ReleaseMouseCapture()
 
 wxPoint EmulatorPanel::PanelPointToHost(int x, int y) const
 {
-	if (integer_scaling_) {
+	if (integer_scaling_ || fit_to_window_) {
 		const int local_x = x - offset_x_;
 		const int local_y = y - offset_y_;
 		if (local_x < 0 || local_y < 0 || local_x >= scaled_x_ || local_y >= scaled_y_) {
@@ -164,7 +184,7 @@ wxPoint EmulatorPanel::HostPointToPanel(int host_x, int host_y) const
 		panel_y *= 2;
 	}
 
-	if (integer_scaling_) {
+	if (integer_scaling_ || fit_to_window_) {
 		return wxPoint(offset_x_ + (panel_x * scaled_x_) / std::max(host_xsize_, 1),
 		               offset_y_ + (panel_y * scaled_y_) / std::max(host_ysize_, 1));
 	}
@@ -197,7 +217,7 @@ wxPoint EmulatorPanel::CaptureCentre() const
 
 void EmulatorPanel::ResizeToHostDisplay()
 {
-	if (full_screen_ || integer_scaling_ || host_xsize_ <= 0 || host_ysize_ <= 0) {
+	if (full_screen_ || integer_scaling_ || fit_to_window_ || host_xsize_ <= 0 || host_ysize_ <= 0) {
 		SetMinSize(wxDefaultSize);
 		SetMaxSize(wxDefaultSize);
 		SetSizeHints(wxDefaultSize, wxDefaultSize);
@@ -247,14 +267,28 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 	bool recalculate_needed = false;
 
 	if (!display_image_.IsOk() || display_image_.GetWidth() != update.xsize ||
-	    display_image_.GetHeight() != update.ysize) {
+	    display_image_.GetHeight() != update.ysize || !display_bitmap_.IsOk()) {
 		display_image_ = wxImage(update.xsize, update.ysize, false);
 		image_width_ = update.xsize;
 		image_height_ = update.ysize;
 		copy_rgb32_rows_to_image(update.buffer, update.xsize, 0, update.ysize, display_image_);
+		/* New frame geometry: rebuild the whole cached bitmap once. */
+		display_bitmap_ = wxBitmap(display_image_);
 		recalculate_needed = true;
 	} else {
 		copy_rgb32_rows_to_image(update.buffer, update.xsize, update.yl, update.yh, display_image_);
+		/* Incremental update (e.g. a moving pointer): refresh only the changed
+		   rows of the cached bitmap instead of rebuilding the whole thing -
+		   converting a full 1920x1080 image every frame is what made scaled
+		   modes crawl. */
+		const int y0 = std::max(0, update.yl);
+		const int y1 = std::min(update.yh, image_height_);
+		if (y1 > y0) {
+			wxBitmap sub(display_image_.GetSubImage(wxRect(0, y0, image_width_, y1 - y0)));
+			wxMemoryDC dst(display_bitmap_);
+			wxMemoryDC srcdc(sub);
+			dst.Blit(0, y0, image_width_, y1 - y0, &srcdc, 0, 0);
+		}
 	}
 
 	if (double_size_ != update.double_size) {
@@ -262,7 +296,16 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 		recalculate_needed = true;
 	}
 
-	if (!full_screen_ && !integer_scaling_ &&
+	if (!full_screen_ && !integer_scaling_ && !fit_to_window_ &&
+	    (update.host_xsize != host_xsize_ || update.host_ysize != host_ysize_)) {
+		host_xsize_ = update.host_xsize;
+		host_ysize_ = update.host_ysize;
+		recalculate_needed = true;
+	}
+
+	/* In fit-to-window mode the guest size still drives the scaling maths, but
+	   the window is left free for the user to resize. */
+	if (fit_to_window_ &&
 	    (update.host_xsize != host_xsize_ || update.host_ysize != host_ysize_)) {
 		host_xsize_ = update.host_xsize;
 		host_ysize_ = update.host_ysize;
@@ -272,7 +315,7 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 	if (recalculate_needed) {
 		CalculateScaling();
 
-		if (!full_screen_) {
+		if (!full_screen_ && !fit_to_window_) {
 			if (integer_scaling_) {
 				ResizeToHostDisplay();
 			} else {
@@ -307,7 +350,7 @@ void EmulatorPanel::ApplyVideoUpdate(const VideoUpdate &update)
 		ymax *= 2;
 	}
 
-	if (full_screen_ || integer_scaling_) {
+	if (full_screen_ || integer_scaling_ || fit_to_window_) {
 		width = (width * scaled_x_) / std::max(host_xsize_, 1);
 
 		if (ymin > 0) {
@@ -375,7 +418,7 @@ void EmulatorPanel::CalculateScaling()
 		host_ysize_ = image_height_;
 	}
 
-	if (full_screen_ || integer_scaling_) {
+	if (full_screen_ || integer_scaling_ || fit_to_window_) {
 		const int widget_x = client.x;
 		const int widget_y = client.y;
 
@@ -410,20 +453,19 @@ void EmulatorPanel::OnPaint(wxPaintEvent &event)
 	wxBufferedPaintDC dc(this);
 	(void)event;
 
-	if (!display_image_.IsOk() || image_width_ <= 0 || image_height_ <= 0) {
+	if (!display_bitmap_.IsOk() || image_width_ <= 0 || image_height_ <= 0) {
 		return;
 	}
 
-	wxBitmap paint_bitmap(display_image_);
 	wxMemoryDC memDC;
-	memDC.SelectObject(paint_bitmap);
+	memDC.SelectObject(display_bitmap_);
 
 	wxRect dest = GetUpdateRegion().GetBox();
 	if (dest.IsEmpty()) {
 		dest = GetClientRect();
 	}
 
-	if (full_screen_ || integer_scaling_) {
+	if (full_screen_ || integer_scaling_ || fit_to_window_) {
 		if ((dest.x < offset_x_) || (dest.y < offset_y_) ||
 		    (dest.x + dest.width > offset_x_ + scaled_x_) ||
 		    (dest.y + dest.height > offset_y_ + scaled_y_)) {
@@ -433,7 +475,7 @@ void EmulatorPanel::OnPaint(wxPaintEvent &event)
 		}
 
 		dc.StretchBlit(offset_x_, offset_y_, scaled_x_, scaled_y_, &memDC, 0, 0, image_width_,
-		               image_height_, wxCOPY, !integer_scaling_);
+		               image_height_, wxCOPY, false);
 		return;
 	}
 
@@ -496,12 +538,27 @@ void EmulatorPanel::OnMouseMove(wxMouseEvent &event)
 
 	MarkUserPointerActivity();
 
-	if ((!pconfig_copy->mousehackon && mouse_captured) || full_screen_) {
+	if (!pconfig_copy->mousehackon && mouse_captured) {
 		const wxPoint middle = CaptureCentre();
 		WarpPointer(middle.x, middle.y);
 
-		const int dx = event.GetX() - middle.x;
-		const int dy = event.GetY() - middle.y;
+		int dx = event.GetX() - middle.x;
+		int dy = event.GetY() - middle.y;
+		const int rawdx = dx, rawdy = dy;
+		/* The captured pointer delta is measured in host-window pixels; when the
+		   display is scaled down the guest is larger than the window, so scale
+		   the delta up to guest units or the pointer crawls. */
+		if ((integer_scaling_ || fit_to_window_ || full_screen_) &&
+		    scaled_x_ > 0 && scaled_y_ > 0) {
+			dx = (dx * host_xsize_) / scaled_x_;
+			dy = (dy * host_ysize_) / scaled_y_;
+		}
+		if (getenv("RPCEMU_MOUSEDBG") != nullptr) {
+			rpclog("MOUSEDBG ev=%d,%d mid=%d,%d raw=%d,%d sent=%d,%d host=%dx%d scaled=%dx%d off=%d,%d full=%d fit=%d\n",
+			       event.GetX(), event.GetY(), middle.x, middle.y, rawdx, rawdy, dx, dy,
+			       host_xsize_, host_ysize_, scaled_x_, scaled_y_, offset_x_, offset_y_,
+			       full_screen_, fit_to_window_);
+		}
 		emulator_.MouseMoveRelative(dx, dy);
 	} else if (pconfig_copy->mousehackon) {
 		SyncMousePosition(event.GetX(), event.GetY());

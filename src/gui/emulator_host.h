@@ -43,6 +43,7 @@ enum class EmuCommandType {
 	MouseTwobutton,
 	CpuIdle,
 	IntegerScaling,
+	FitToWindow,
 	ReloadIdeImages,
 	SwitchMachine,
 	NatRuleAdd,
@@ -123,6 +124,7 @@ public:
 	void MouseTwobutton();
 	void CpuIdle();
 	void IntegerScaling();
+	void FitToWindow();
 	void SwitchMachine(const std::string &config_path);
 	void NatRuleAdd(const PortForwardRule &rule);
 	void NatRuleEdit(const PortForwardRule &old_rule, const PortForwardRule &new_rule);

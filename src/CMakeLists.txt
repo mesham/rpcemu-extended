@@ -8,6 +8,7 @@ set(RPCEMU_CORE_SOURCES
     cdrom-iso.c
     cmos.c
     cp15.c
+    edid.c
     fdc.c
     fpa.c
     hostfs.c

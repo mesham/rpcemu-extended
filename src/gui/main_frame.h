@@ -71,6 +71,7 @@ enum MainFrameMenuId {
 	ID_MENU_MUTE,
 	ID_MENU_FULLSCREEN,
 	ID_MENU_INTEGER_SCALING,
+	ID_MENU_FIT_TO_WINDOW,
 	ID_MENU_VNC,
 	ID_MENU_SERIAL,
 	ID_MENU_PARALLEL,
@@ -162,6 +163,7 @@ private:
 	void OnMute(wxCommandEvent &event);
 	void OnFullscreen(wxCommandEvent &event);
 	void OnIntegerScaling(wxCommandEvent &event);
+	void OnFitToWindow(wxCommandEvent &event);
 	void OnCpuIdle(wxCommandEvent &event);
 	void OnMouseHack(wxCommandEvent &event);
 	void OnMouseTwobutton(wxCommandEvent &event);
@@ -195,6 +197,7 @@ private:
 	void ProcessEmulatorKeyEvent(wxKeyEvent &event, bool key_down);
 	void ExitFullScreen();
 	void EnterFullScreen();
+	void ApplyFitToWindowSize();
 
 	void BuildMenus();
 	void BuildToolBar();
@@ -238,6 +241,7 @@ private:
 	wxMenuItem *mute_menu_item_ = nullptr;
 	wxMenuItem *fullscreen_menu_item_ = nullptr;
 	wxMenuItem *integer_scaling_menu_item_ = nullptr;
+	wxMenuItem *fit_to_window_menu_item_ = nullptr;
 	wxMenuItem *cpu_idle_menu_item_ = nullptr;
 	wxMenuItem *mouse_hack_menu_item_ = nullptr;
 	wxMenuItem *mouse_twobutton_menu_item_ = nullptr;

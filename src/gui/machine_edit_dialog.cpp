@@ -229,6 +229,14 @@ void MachineEditDialog::BuildUi()
 	network_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnNetworkChanged, this);
 	rom_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnRomOrModelChanged, this);
 	model_combo_->Bind(wxEVT_COMBOBOX, &MachineEditDialog::OnRomOrModelChanged, this);
+	/* 512MB RAM is Kinetic-only: if any other model is selected, snap a 512MB
+	   choice back to 256MB immediately so it can't be left selected. */
+	mem_combo_->Bind(wxEVT_COMBOBOX, [this](wxCommandEvent &event) {
+		if (CurrentModelSelection() != Model_Kinetic && mem_combo_->GetSelection() == 7) {
+			mem_combo_->SetSelection(6); /* 256 MB */
+		}
+		event.Skip();
+	});
 	name_edit_->Bind(wxEVT_TEXT, &MachineEditDialog::OnNameChanged, this);
 	ok_button->Bind(wxEVT_BUTTON, &MachineEditDialog::OnOk, this);
 	cancel_button->Bind(wxEVT_BUTTON, [this](wxCommandEvent &) { EndModal(wxID_CANCEL); });
@@ -317,9 +325,10 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	char msg[512] = "";
 	const Model model = CurrentModelSelection();
 
-	/* The Kinetic is defined by its 512MB (2 on-card SDRAM banks) and only
-	   supports 2MB VRAM (larger sizes fault during boot with the 512MB SDRAM
-	   map), so lock both selectors for that model. 512MB is Kinetic-only. */
+	/* The Kinetic is defined by its 512MB (2 on-card SDRAM banks), so lock the
+	   memory selector to 512MB. VRAM is clamped to 2MB for now: >2MB faults on
+	   some ROMs (HAL physical-map bug) pending the HAL VRAMWidth ROM patch.
+	   512MB is Kinetic-only. */
 	if (model == Model_Kinetic) {
 		mem_combo_->SetSelection(7);  /* "512 MB" (index into mem_values[]) */
 		mem_combo_->Enable(false);
@@ -713,16 +722,26 @@ void MachineEditDialog::SaveSettings()
 	}
 
 	const int mem_values[] = {4, 8, 16, 32, 64, 128, 256, 512};
-	const int mem_sel = std::max(0, mem_combo_->GetSelection());
+	int mem_sel = std::max(0, mem_combo_->GetSelection());
 	const int vram_sel = std::max(0, vram_combo_->GetSelection());
 	const int model_sel = std::max(0, model_combo_->GetSelection());
+
+	/* 512MB RAM (index 7) is Kinetic-only; clamp every other model to 256MB. */
+	if (model_sel != Model_Kinetic && mem_sel == 7) {
+		mem_sel = 6; /* 256 MB */
+	}
+
+	/* Record the configured model in the global config so it persists on save.
+	   (config_save writes cfg->model, not the running machine.model, so a model
+	   change to a running machine is no longer reverted when the config saves.) */
+	config.model = static_cast<Model>(model_sel);
 
 	/* VRAM combo: 0 = None, 1 = 2 MB, 2 = 8 MB, 3 = 16 MB */
 	static const int vram_sizes[] = { 0, 2, 8, 16 };
 	int vram_mb = vram_sizes[vram_sel < 4 ? vram_sel : 1];
 
-	/* The Kinetic only supports 2MB VRAM - larger sizes fault during boot with
-	   the 512MB SDRAM memory map, so force 2MB regardless of the selection. */
+	/* Kinetic clamps to 2MB VRAM for now (HAL physical-map fault on >2MB with
+	   the 512MB SDRAM map, pending the HAL VRAMWidth ROM patch). */
 	if (model_sel == Model_Kinetic) {
 		vram_mb = 2;
 	}

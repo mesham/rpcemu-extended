@@ -73,6 +73,29 @@ char discname[2][260]={"boot.adf","notboot.adf"};
 
 Machine machine; /**< The details of the current machine being emulated */
 
+/* Host display geometry, published by the front-end so the synthesised monitor
+   EDID can advertise a native mode matching the real screen. Zero until set. */
+static unsigned host_display_width = 0;
+static unsigned host_display_height = 0;
+
+void
+rpcemu_set_host_display(unsigned width, unsigned height)
+{
+	host_display_width = width;
+	host_display_height = height;
+}
+
+int
+rpcemu_get_host_display(unsigned *width, unsigned *height)
+{
+	if (host_display_width == 0 || host_display_height == 0) {
+		return 0;
+	}
+	*width = host_display_width;
+	*height = host_display_height;
+	return 1;
+}
+
 /** Array of details of models the emulator can emulate, must be kept in sync with
     Model enum in rpcemu.h */
 const Model_Details models[] = {
@@ -107,6 +130,7 @@ Config config = {
 	0,			/* cpu_idle */
 	1,			/* show_fullscreen_message */
 	0,			/* integer_scaling */
+	0,			/* fit_to_window */
 	NULL,			/* network_capture */
 	0,			/* vnc_enabled */
 	5900,			/* vnc_port */
@@ -115,6 +139,7 @@ Config config = {
 	"",			/* hostcmd_socket (empty => <datadir>hostcmd.sock) */
 	1,			/* debug_enabled (ON by default) */
 	"",			/* debug_socket (empty => <datadir>rpcemu-debug.sock) */
+	Model_RPCARM710,	/* model (configured machine model) */
 };
 
 /* Performance measuring variables */
@@ -1253,9 +1278,10 @@ rpcemu_config_apply_new_settings(Config *new_config, Model new_model)
 		new_config->mem_size = 256;
 	}
 
-	/* The Kinetic only works reliably with the 2MB of VRAM the real hardware
-	   shipped with; larger VRAM sizes fault during boot with the 512MB SDRAM
-	   memory map, so clamp it here regardless of what the config requested. */
+	/* Kinetic + VRAM > 2MB faults on some ROMs: the HAL miscomputes its
+	   physical-memory table when the 512MB SDRAM map and >2MB VRAM are both
+	   present (the R4=0xc0000000 abort). Clamp to 2MB until the HAL VRAMWidth
+	   ROM patch lands to fix it properly. */
 	if (machine.model == Model_Kinetic) {
 		new_config->vram_size = 2;
 	}

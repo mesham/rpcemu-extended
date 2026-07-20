@@ -639,6 +639,10 @@ void EmulatorHost::HandleCommand(const EmuCommand &command)
 		config.integer_scaling ^= 1;
 		config_save(&config);
 		break;
+	case EmuCommandType::FitToWindow:
+		config.fit_to_window ^= 1;
+		config_save(&config);
+		break;
 	case EmuCommandType::CdromDisabled:
 		if (config.cdromenabled) {
 			config.cdromenabled = 0;
@@ -889,6 +893,11 @@ void EmulatorHost::CpuIdle()
 void EmulatorHost::IntegerScaling()
 {
 	PostCommand(MakeCommand(EmuCommandType::IntegerScaling));
+}
+
+void EmulatorHost::FitToWindow()
+{
+	PostCommand(MakeCommand(EmuCommandType::FitToWindow));
 }
 
 void EmulatorHost::SwitchMachine(const std::string &config_path)

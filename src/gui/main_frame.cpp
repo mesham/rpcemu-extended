@@ -11,6 +11,7 @@
 #include <cstring>
 #include <mutex>
 
+#include <wx/display.h>
 #include <wx/filedlg.h>
 #include <wx/filename.h>
 #include <wx/icon.h>
@@ -124,7 +125,11 @@ MainFrame::MainFrame()
 	panel_->Bind(wxEVT_KEY_DOWN, &MainFrame::OnKeyDown, this);
 	panel_->Bind(wxEVT_KEY_UP, &MainFrame::OnKeyUp, this);
 	auto *sizer = new wxBoxSizer(wxVERTICAL);
-	sizer->Add(panel_, 0, wxALIGN_CENTER);
+	/* The panel must fill the frame's client area so that scaled modes
+	   (fit-to-window, full-screen, integer scaling) can use the whole window;
+	   in the fixed 1:1 mode the panel's own size hints keep the frame shrink-
+	   wrapped to the guest resolution, so expanding it here is harmless there. */
+	sizer->Add(panel_, 1, wxEXPAND);
 	SetSizer(sizer);
 
 	BuildMenus();
@@ -184,6 +189,10 @@ void MainFrame::StartEmulator()
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
 		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
+		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
+	}
+	if (config_copy_.fit_to_window) {
+		CallAfter([this] { ApplyFitToWindowSize(); });
 	}
 	SyncSettingsMenuChecks();
 	SyncCdromMenuChecks();
@@ -621,12 +630,20 @@ void MainFrame::EnterFullScreen()
 	ShowFullScreen(true, wxFULLSCREEN_ALL);
 	full_screen_ = true;
 
-	if (config_copy_.mousehackon) {
-		if (emulator_) {
-			emulator_->MouseHack();
-		}
-		reenable_mousehack_ = true;
+	/* A static guest desktop sends no fresh video update after the transition,
+	   so force a full repaint once the resize has been processed - otherwise the
+	   panel can be left blank until something on the guest happens to redraw. */
+	if (panel_ != nullptr) {
+		panel_->CallAfter([this] {
+			if (panel_ != nullptr) {
+				panel_->ForceRedraw();
+			}
+		});
 	}
+
+	/* Full-screen is just a full-screen window: leave the mouse mode alone so
+	   follow-mouse (which works when scaled) keeps working here too, rather than
+	   forcing the capture/relative path. */
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
 	}
@@ -655,12 +672,16 @@ void MainFrame::ExitFullScreen()
 	Fit();
 	full_screen_ = false;
 
-	if (reenable_mousehack_) {
-		if (emulator_) {
-			emulator_->MouseHack();
-		}
-		reenable_mousehack_ = false;
+	/* Force a full repaint once the windowed layout has settled (see the note
+	   in EnterFullScreen). */
+	if (panel_ != nullptr) {
+		panel_->CallAfter([this] {
+			if (panel_ != nullptr) {
+				panel_->ForceRedraw();
+			}
+		});
 	}
+
 	if (panel_ != nullptr) {
 		panel_->UpdateMouseCursor();
 	}
@@ -684,11 +705,89 @@ void MainFrame::OnIntegerScaling(wxCommandEvent &event)
 	if (integer_scaling_menu_item_ != nullptr) {
 		integer_scaling_menu_item_->Check(config_copy_.integer_scaling != 0);
 	}
+	/* Integer scaling and fit-to-window are alternative scaling modes; turning
+	   one on turns the other off. */
+	if (config_copy_.integer_scaling && config_copy_.fit_to_window) {
+		config_copy_.fit_to_window = 0;
+		if (fit_to_window_menu_item_ != nullptr) {
+			fit_to_window_menu_item_->Check(false);
+		}
+		if (emulator_) {
+			emulator_->FitToWindow();
+		}
+	}
 	if (panel_ != nullptr) {
+		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
 		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
 	}
 	if (emulator_) {
 		emulator_->IntegerScaling();
+	}
+}
+
+void MainFrame::OnFitToWindow(wxCommandEvent &event)
+{
+	config_copy_.fit_to_window = event.IsChecked() ? 1 : 0;
+	if (fit_to_window_menu_item_ != nullptr) {
+		fit_to_window_menu_item_->Check(config_copy_.fit_to_window != 0);
+	}
+	/* Mutually exclusive with integer scaling. */
+	if (config_copy_.fit_to_window && config_copy_.integer_scaling) {
+		config_copy_.integer_scaling = 0;
+		if (integer_scaling_menu_item_ != nullptr) {
+			integer_scaling_menu_item_->Check(false);
+		}
+		if (emulator_) {
+			emulator_->IntegerScaling();
+		}
+	}
+	if (panel_ != nullptr) {
+		panel_->SetIntegerScaling(config_copy_.integer_scaling != 0);
+		panel_->SetFitToWindow(config_copy_.fit_to_window != 0);
+	}
+	if (emulator_) {
+		emulator_->FitToWindow();
+	}
+
+	/* Give the now freely-resizable window a comfortable starting size, then
+	   force a repaint - a static guest desktop sends no fresh frame to trigger
+	   one after the resize. */
+	if (config_copy_.fit_to_window) {
+		ApplyFitToWindowSize();
+	}
+	if (panel_ != nullptr) {
+		panel_->CallAfter([this] {
+			if (panel_ != nullptr) {
+				panel_->ForceRedraw();
+			}
+		});
+	}
+}
+
+/* Size the window to a comfortable default for fit-to-window mode: no larger
+   than 80% of the display, and no smaller than a usable floor, while leaving it
+   freely resizable by the user afterwards. */
+void MainFrame::ApplyFitToWindowSize()
+{
+	if (!config_copy_.fit_to_window) {
+		return;
+	}
+
+	const wxRect area = wxDisplay(wxDisplay::GetFromWindow(this)).GetClientArea();
+	const int cap_w = std::max(area.width * 4 / 5, 800);
+	const int cap_h = std::max(area.height * 4 / 5, 600);
+	const wxSize cur = GetSize();
+	const int w = std::clamp(cur.x, 800, cap_w);
+	const int h = std::clamp(cur.y, 600, cap_h);
+
+	if (w != cur.x || h != cur.y) {
+		SetSize(wxSize(w, h));
+	}
+	/* Force the sizer to re-lay-out so the (now unconstrained) panel expands to
+	   fill the client area, even if the frame size did not actually change. */
+	Layout();
+	if (panel_ != nullptr) {
+		panel_->ForceRedraw();
 	}
 }
 

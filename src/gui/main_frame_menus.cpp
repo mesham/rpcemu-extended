@@ -148,6 +148,8 @@ void MainFrame::BuildMenus()
 	fullscreen_menu_item_ = settings_menu->AppendCheckItem(ID_MENU_FULLSCREEN, "Full-screen Mode");
 	integer_scaling_menu_item_ =
 	    settings_menu->AppendCheckItem(ID_MENU_INTEGER_SCALING, "Pixel Perfect");
+	fit_to_window_menu_item_ =
+	    settings_menu->AppendCheckItem(ID_MENU_FIT_TO_WINDOW, "Fit to Window");
 	settings_menu->AppendSeparator();
 #ifdef RPCEMU_VNC
 	settings_menu->Append(ID_MENU_VNC, "&VNC Server...");
@@ -160,9 +162,9 @@ void MainFrame::BuildMenus()
 	settings_menu->AppendSeparator();
 
 	auto *mouse_menu = new wxMenu;
-	mouse_hack_menu_item_ =
-	    mouse_menu->AppendCheckItem(ID_MENU_MOUSE_HACK, "Follow Host Mouse");
-	mouse_menu->AppendSeparator();
+	/* Follow-mouse is now always on (it works windowed, scaled and full-screen),
+	   so the toggle is hidden. The mouse-capture / relative path is left in the
+	   code (OnMouseMove, mouse_captured) and can be re-exposed here if needed. */
 	mouse_twobutton_menu_item_ =
 	    mouse_menu->AppendCheckItem(ID_MENU_MOUSE_TWOBUTTON, "Two-button Mouse Mode");
 	settings_menu->AppendSubMenu(mouse_menu, "Mouse");
@@ -228,8 +230,8 @@ void MainFrame::BuildMenus()
 	BindMenuItem(settings_menu, ID_MENU_MUTE, this, &MainFrame::OnMute);
 	BindMenuItem(settings_menu, ID_MENU_FULLSCREEN, this, &MainFrame::OnFullscreen);
 	BindMenuItem(settings_menu, ID_MENU_INTEGER_SCALING, this, &MainFrame::OnIntegerScaling);
+	BindMenuItem(settings_menu, ID_MENU_FIT_TO_WINDOW, this, &MainFrame::OnFitToWindow);
 	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
-	BindMenuItem(mouse_menu, ID_MENU_MOUSE_HACK, this, &MainFrame::OnMouseHack);
 	BindMenuItem(mouse_menu, ID_MENU_MOUSE_TWOBUTTON, this, &MainFrame::OnMouseTwobutton);
 #ifdef RPCEMU_VNC
 	BindMenuItem(settings_menu, ID_MENU_VNC, this, &MainFrame::OnVnc);
@@ -378,6 +380,9 @@ void MainFrame::SyncSettingsMenuChecks()
 	}
 	if (integer_scaling_menu_item_ != nullptr) {
 		integer_scaling_menu_item_->Check(config_copy_.integer_scaling != 0);
+	}
+	if (fit_to_window_menu_item_ != nullptr) {
+		fit_to_window_menu_item_->Check(config_copy_.fit_to_window != 0);
 	}
 	if (mute_menu_item_ != nullptr) {
 		mute_menu_item_->Check(plt_sound_is_muted() != 0);

@@ -356,6 +356,7 @@ extern "C" void config_sync_machine_edit_to_copy(Config *dest, const Config *src
 
 	dest->mem_size = src->mem_size;
 	dest->vram_size = src->vram_size;
+	dest->model = src->model;
 	dest->refresh = src->refresh;
 	dest->network_type = src->network_type;
 
@@ -496,6 +497,7 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		}
 	}
 
+	cfg->model = model;
 	rpcemu_model_changed(model);
 
 	if (model == Model_A7000 || model == Model_A7000plus) {
@@ -505,8 +507,8 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		cfg->mem_size = 256;
 		cfg->vram_size = 4;
 	}
-	/* The Kinetic only boots reliably with 2MB VRAM (larger sizes fault with
-	   the 512MB SDRAM map), so clamp it even if the config file overrode it. */
+	/* Kinetic + VRAM > 2MB faults on some ROMs (HAL physical-map bug). Clamp
+	   until the HAL VRAMWidth ROM patch lands. */
 	if (model == Model_Kinetic) {
 		cfg->vram_size = 2;
 	}
@@ -531,6 +533,9 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 
 	settings.Read("mouse_following", &value, 1L);
 	cfg->mousehackon = static_cast<int>(value);
+	/* Follow-mouse is always on: the UI toggle is hidden and the capture path is
+	   dormant. Force it on regardless of any older stored value. */
+	cfg->mousehackon = 1;
 	settings.Read("mouse_twobutton", &value, 0L);
 	cfg->mousetwobutton = static_cast<int>(value);
 
@@ -563,6 +568,8 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->show_fullscreen_message = static_cast<int>(value);
 	settings.Read("integer_scaling", &value, 0L);
 	cfg->integer_scaling = static_cast<int>(value);
+	settings.Read("fit_to_window", &value, 0L);
+	cfg->fit_to_window = static_cast<int>(value);
 	settings.Read("vnc_enabled", &value, 0L);
 	cfg->vnc_enabled = static_cast<int>(value);
 	settings.Read("vnc_port", &value, 5900L);
@@ -610,7 +617,17 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 
 	const wxString mem_size_str = wxString::Format("%u", cfg->mem_size);
 	settings.Write("mem_size", mem_size_str);
-	settings.Write("model", wxString(models[machine.model].name_config, wxConvUTF8));
+	/* Write the CONFIGURED model (cfg->model), not the running machine.model:
+	   editing a running machine's model updates cfg->model but not machine.model
+	   (which needs a relaunch), and writing machine.model here would revert the
+	   edit on save. Guard the index in case it is uninitialised. */
+	{
+		Model m = cfg->model;
+		if (m < 0 || m >= Model_MAX) {
+			m = machine.model;
+		}
+		settings.Write("model", wxString(models[m].name_config, wxConvUTF8));
+	}
 	settings.Write("vram_size", wxString::Format("%u", cfg->vram_size));
 
 	settings.Write("sound_enabled", static_cast<long>(cfg->soundenabled));
@@ -638,6 +655,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("cpu_idle", static_cast<long>(cfg->cpu_idle));
 	settings.Write("show_fullscreen_message", static_cast<long>(cfg->show_fullscreen_message));
 	settings.Write("integer_scaling", static_cast<long>(cfg->integer_scaling));
+	settings.Write("fit_to_window", static_cast<long>(cfg->fit_to_window));
 	settings.Write("vnc_enabled", static_cast<long>(cfg->vnc_enabled));
 	settings.Write("vnc_port", static_cast<long>(cfg->vnc_port));
 	settings.Write("vnc_password", wxString(cfg->vnc_password, wxConvUTF8));
