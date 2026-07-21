@@ -161,6 +161,7 @@ void MachineEditDialog::BuildUi()
 	}
 	vram_combo_->Append("None");
 	vram_combo_->Append("2 MB");
+	vram_combo_->Append("4 MB");   /* Phoebe's fixed VRAM */
 	vram_combo_->Append("8 MB");
 	vram_combo_->Append("16 MB");
 
@@ -325,21 +326,51 @@ void MachineEditDialog::UpdateRomModelCompatibility()
 	char msg[512] = "";
 	const Model model = CurrentModelSelection();
 
-	/* The Kinetic is defined by its 512MB (2 on-card SDRAM banks), so lock the
-	   memory selector to 512MB. VRAM is clamped to 2MB for now: >2MB faults on
-	   some ROMs (HAL physical-map bug) pending the HAL VRAMWidth ROM patch.
-	   512MB is Kinetic-only. */
-	if (model == Model_Kinetic) {
-		mem_combo_->SetSelection(7);  /* "512 MB" (index into mem_values[]) */
+	/* Constrain the RAM/VRAM selectors to what each model actually supports,
+	   mirroring the core's own clamps (settings.cpp config_load and rpcemu.c
+	   config_apply) so the dialog can never present an unsupported combination.
+	     mem_values[] index: 6 = 256MB, 7 = 512MB.
+	     vram combo index:   0 = None, 1 = 2MB, 2 = 4MB, 3 = 8MB, 4 = 16MB. */
+	switch (model) {
+	case Model_Kinetic:
+		/* Defined by its 512MB (two on-card SDRAM banks). VRAM is clamped to
+		   2MB: >2MB faults on the HAL physical-map path (pending the HAL
+		   VRAMWidth ROM patch). Both fixed and non-writable. 512MB is
+		   Kinetic-only. */
+		mem_combo_->SetSelection(7);   /* 512 MB */
 		mem_combo_->Enable(false);
-		vram_combo_->SetSelection(1); /* "2 MB" */
+		vram_combo_->SetSelection(1);  /* 2 MB */
 		vram_combo_->Enable(false);
-	} else {
+		break;
+
+	case Model_Phoebe:
+		/* Phoebe (RPC2) is a fixed 256MB RAM + 4MB VRAM machine. */
+		mem_combo_->SetSelection(6);   /* 256 MB */
+		mem_combo_->Enable(false);
+		vram_combo_->SetSelection(2);  /* 4 MB */
+		vram_combo_->Enable(false);
+		break;
+
+	case Model_A7000:
+	case Model_A7000plus:
+		/* The A7000 family has no VRAM at all - video runs from main DRAM.
+		   RAM stays user-selectable up to the 256MB motherboard limit. */
+		vram_combo_->SetSelection(0);  /* None */
+		vram_combo_->Enable(false);
+		if (mem_combo_->GetSelection() == 7) {
+			mem_combo_->SetSelection(6); /* 512MB is Kinetic-only */
+		}
+		mem_combo_->Enable(true);
+		break;
+
+	default:
+		/* Risc PC models: RAM up to 256MB (512MB is Kinetic-only), VRAM free. */
 		if (mem_combo_->GetSelection() == 7) {
 			mem_combo_->SetSelection(6); /* 512MB is Kinetic-only -> drop to 256MB */
 		}
 		mem_combo_->Enable(true);
 		vram_combo_->Enable(true);
+		break;
 	}
 
 	const wxString rom_dir = SelectedRomDir();
@@ -657,10 +688,12 @@ void MachineEditDialog::LoadSettings()
 	int vram_index = 1; /* "2 MB" */
 	if (vram_text == "0") {
 		vram_index = 0;
-	} else if (vram_text == "8") {
+	} else if (vram_text == "4") {
 		vram_index = 2;
-	} else if (vram_text == "16") {
+	} else if (vram_text == "8") {
 		vram_index = 3;
+	} else if (vram_text == "16") {
+		vram_index = 4;
 	}
 	vram_combo_->SetSelection(vram_index);
 
@@ -726,24 +759,29 @@ void MachineEditDialog::SaveSettings()
 	const int vram_sel = std::max(0, vram_combo_->GetSelection());
 	const int model_sel = std::max(0, model_combo_->GetSelection());
 
-	/* 512MB RAM (index 7) is Kinetic-only; clamp every other model to 256MB. */
-	if (model_sel != Model_Kinetic && mem_sel == 7) {
-		mem_sel = 6; /* 256 MB */
-	}
-
 	/* Record the configured model in the global config so it persists on save.
 	   (config_save writes cfg->model, not the running machine.model, so a model
 	   change to a running machine is no longer reverted when the config saves.) */
 	config.model = static_cast<Model>(model_sel);
 
-	/* VRAM combo: 0 = None, 1 = 2 MB, 2 = 8 MB, 3 = 16 MB */
-	static const int vram_sizes[] = { 0, 2, 8, 16 };
-	int vram_mb = vram_sizes[vram_sel < 4 ? vram_sel : 1];
+	/* VRAM combo: 0 = None, 1 = 2 MB, 2 = 4 MB, 3 = 8 MB, 4 = 16 MB */
+	static const int vram_sizes[] = { 0, 2, 4, 8, 16 };
+	int vram_mb = vram_sizes[vram_sel < 5 ? vram_sel : 1];
 
-	/* Kinetic clamps to 2MB VRAM for now (HAL physical-map fault on >2MB with
-	   the 512MB SDRAM map, pending the HAL VRAMWidth ROM patch). */
-	if (model_sel == Model_Kinetic) {
-		vram_mb = 2;
+	/* Enforce the same per-model RAM/VRAM limits as UpdateRomModelCompatibility
+	   (and the core clamps), in case a combo was left in a stale state. */
+	switch (model_sel) {
+	case Model_Kinetic:
+		mem_sel = 7; vram_mb = 2; break;	/* 512MB + 2MB (HAL clamp) */
+	case Model_Phoebe:
+		mem_sel = 6; vram_mb = 4; break;	/* fixed 256MB + 4MB */
+	case Model_A7000:
+	case Model_A7000plus:
+		if (mem_sel == 7) { mem_sel = 6; }	/* 512MB is Kinetic-only */
+		vram_mb = 0; break;			/* no VRAM (video from DRAM) */
+	default:
+		if (mem_sel == 7) { mem_sel = 6; }	/* 512MB is Kinetic-only */
+		break;
 	}
 
 	const wxString rom_dir = SelectedRomDir();

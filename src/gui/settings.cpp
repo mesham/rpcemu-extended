@@ -471,6 +471,8 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 		cfg->vram_size = 0;
 	} else if (sText == "2") {
 		cfg->vram_size = 2;
+	} else if (sText == "4") {
+		cfg->vram_size = 4; /* Phoebe */
 	} else if (sText == "16") {
 		cfg->vram_size = 16;
 	} else {
