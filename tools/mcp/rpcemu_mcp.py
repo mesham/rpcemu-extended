@@ -323,12 +323,16 @@ def _vnc_screenshot_png() -> bytes:
             b += c
         return b
 
-    # Force 32bpp true-colour, big-endian, RGB shifts 16/8/0.
+    # Force 32bpp true-colour, little-endian, red/green/blue shifts 0/8/16 so
+    # each pixel arrives on the wire as bytes [R, G, B, x] — exactly what
+    # _encode_png expects (it reads the first three bytes of every 4-byte pixel
+    # as R, G, B). Requesting big-endian 16/8/0 instead makes the server emit
+    # [x, R, G, B], which shifts every channel and yields visibly wrong colours.
     spf = (
         struct.pack(">BBBB", 0, 0, 0, 0)
-        + struct.pack(">BBBB", 32, 24, 1, 1)
+        + struct.pack(">BBBB", 32, 24, 0, 1)
         + struct.pack(">HHH", 255, 255, 255)
-        + struct.pack(">BBB", 16, 8, 0)
+        + struct.pack(">BBB", 0, 8, 16)
         + b"\x00\x00\x00"
     )
     s.sendall(spf)
