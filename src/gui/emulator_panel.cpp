@@ -34,6 +34,7 @@ wxBEGIN_EVENT_TABLE(EmulatorPanel, wxPanel)
 	EVT_MOUSEWHEEL(EmulatorPanel::OnMouseWheel)
 	EVT_ENTER_WINDOW(EmulatorPanel::OnEnterWindow)
 	EVT_LEAVE_WINDOW(EmulatorPanel::OnLeaveWindow)
+	EVT_MOUSE_CAPTURE_LOST(EmulatorPanel::OnMouseCaptureLost)
 wxEND_EVENT_TABLE()
 
 EmulatorPanel::EmulatorPanel(wxWindow *parent, EmulatorHost &emulator)
@@ -586,7 +587,36 @@ void EmulatorPanel::ForwardMousePress(const wxMouseEvent &event)
 
 	last_press_button_ = buttons;
 	last_press_time_ = now;
+	held_buttons_ |= buttons;
+	CapturePointerForDrag();
 	emulator_.MousePress(buttons);
+}
+
+void EmulatorPanel::CapturePointerForDrag()
+{
+	/* Windows, unlike GTK/X11, does not implicitly grab the pointer for the
+	   duration of a button press. Without an explicit capture a button
+	   released after the pointer has wandered outside the panel (e.g. dragging
+	   a window's resize corner past the edge of the RPCEmu area) never
+	   delivers its EVT_*_UP here, leaving RISC OS convinced the button is
+	   still down. Capturing the mouse for the lifetime of the drag guarantees
+	   the matching release is delivered wherever it happens. Only needed in
+	   follows-host (mousehack) mode; capture mode already pins the pointer to
+	   the window centre so its release can never escape. */
+	if (!pointer_captured_ && pconfig_copy != nullptr && pconfig_copy->mousehackon) {
+		CaptureMouse();
+		pointer_captured_ = true;
+	}
+}
+
+void EmulatorPanel::ReleasePointerAfterDrag()
+{
+	if (pointer_captured_ && held_buttons_ == 0) {
+		if (HasCapture()) {
+			ReleaseMouse();
+		}
+		pointer_captured_ = false;
+	}
 }
 
 void EmulatorPanel::OnMouseDown(wxMouseEvent &event)
@@ -631,9 +661,25 @@ void EmulatorPanel::OnMouseUp(wxMouseEvent &event)
 	const int buttons = MapClickButton(event);
 	if (buttons != 0) {
 		last_press_button_ = 0;
+		held_buttons_ &= ~buttons;
 		emulator_.MouseRelease(buttons);
+		ReleasePointerAfterDrag();
 	}
 	event.Skip();
+}
+
+void EmulatorPanel::OnMouseCaptureLost(wxMouseCaptureLostEvent &event)
+{
+	/* The OS can revoke the capture out from under us (Alt-Tab, another window
+	   grabbing input, etc.). Treat that as a release of every button we still
+	   believe is held so RISC OS is never left with a phantom pressed button. */
+	pointer_captured_ = false;
+	if (held_buttons_ != 0) {
+		emulator_.MouseRelease(held_buttons_);
+		held_buttons_ = 0;
+	}
+	last_press_button_ = 0;
+	(void)event;
 }
 
 void EmulatorPanel::OnEnterWindow(wxMouseEvent &event)

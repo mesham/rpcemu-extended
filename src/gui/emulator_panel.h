@@ -34,6 +34,9 @@ private:
 	void OnMouseWheel(wxMouseEvent &event);
 	void OnEnterWindow(wxMouseEvent &event);
 	void OnLeaveWindow(wxMouseEvent &event);
+	void OnMouseCaptureLost(wxMouseCaptureLostEvent &event);
+	void CapturePointerForDrag();
+	void ReleasePointerAfterDrag();
 
 	void CalculateScaling();
 	void ResizeToHostDisplay();
@@ -61,6 +64,8 @@ private:
 	int last_mouse_x_ = -1;
 	int last_mouse_y_ = -1;
 	int last_press_button_ = 0;
+	int held_buttons_ = 0;		/**< Bitmask of buttons currently forwarded as pressed */
+	bool pointer_captured_ = false;	/**< True while we hold the wx mouse capture for a drag */
 	std::chrono::steady_clock::time_point last_press_time_{};
 	bool integer_scaling_ = false;
 	bool fit_to_window_ = false;
