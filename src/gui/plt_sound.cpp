@@ -4,10 +4,7 @@ extern "C" {
 
 #include <SDL.h>
 
-#include <algorithm>
-#include <cstring>
 #include <mutex>
-#include <vector>
 
 namespace {
 
@@ -39,8 +36,6 @@ public:
 		}
 
 		samplerate_ = samplerate;
-		queue_.clear();
-		read_pos_ = 0;
 
 		if (SDL_InitSubSystem(SDL_INIT_AUDIO) != 0) {
 			warnNoAudio(SDL_GetError());
@@ -71,9 +66,17 @@ public:
 		if (device_ == 0) {
 			return static_cast<int32_t>(bufferlen_);
 		}
-		const int32_t queued = static_cast<int32_t>(queue_.size() - read_pos_);
-		const int32_t capacity = static_cast<int32_t>(bufferlen_ * 8);
-		return capacity - queued;
+		/* Back-pressure must reflect what is genuinely still waiting to be
+		   played, i.e. SDL's own queue - not a local staging buffer that play()
+		   drains completely on every call. Measuring the latter reported the
+		   queue as permanently empty, so every block was pushed into SDL's
+		   unbounded queue immediately; any transient burst (catch-up after a
+		   HostFS stall, scheduler jitter) then inflated the backlog for good,
+		   and audio latency ratcheted up and never recovered. */
+		const int32_t capacity = static_cast<int32_t>(bufferlen_ * kLatencyBuffers);
+		const int32_t queued = static_cast<int32_t>(SDL_GetQueuedAudioSize(device_));
+		const int32_t freebytes = capacity - queued;
+		return freebytes > 0 ? freebytes : 0;
 	}
 
 	void play(uint32_t samplerate, const char *buffer, uint32_t length)
@@ -87,29 +90,11 @@ public:
 			return;
 		}
 
+		/* Hand the block straight to SDL. Upstream back-pressure (bufferFree,
+		   consulted by sound_buffer_update before each call) bounds how far
+		   ahead we queue, so no local staging buffer is needed. */
 		std::lock_guard<std::mutex> lock(mutex_);
-		const size_t old_size = queue_.size();
-		queue_.resize(old_size + length);
-		memcpy(queue_.data() + old_size, buffer, length);
-
-		uint8_t stream[4096];
-		while (true) {
-			const size_t available = queue_.size() - read_pos_;
-			if (available == 0) {
-				break;
-			}
-
-			const size_t to_copy = std::min(available, sizeof(stream));
-			memcpy(stream, queue_.data() + read_pos_, to_copy);
-			SDL_QueueAudio(device_, stream, static_cast<Uint32>(to_copy));
-			read_pos_ += to_copy;
-
-			if (read_pos_ > queue_.size() / 2) {
-				queue_.erase(queue_.begin(),
-				              queue_.begin() + static_cast<std::ptrdiff_t>(read_pos_));
-				read_pos_ = 0;
-			}
-		}
+		SDL_QueueAudio(device_, buffer, length);
 	}
 
 private:
@@ -121,14 +106,18 @@ private:
 		}
 	}
 
+	/* Target audio latency, expressed as a multiple of one RISC OS sound
+	   buffer (~53ms each). Four buffers (~210ms) leaves comfortable headroom
+	   against host scheduler jitter while keeping the delay low enough that
+	   beeps and other short sounds feel prompt. */
+	static constexpr uint32_t kLatencyBuffers = 4;
+
 	uint32_t bufferlen_ = 0;
 	uint32_t samplerate_ = 0;
 	SDL_AudioDeviceID device_ = 0;
 	bool muted_ = false;
 	bool warned_ = false;
 	mutable std::mutex mutex_;
-	std::vector<uint8_t> queue_;
-	size_t read_pos_ = 0;
 };
 
 SdlAudioOutput *audio_out = nullptr;

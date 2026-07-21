@@ -422,6 +422,65 @@ name_host_to_riscos(const char *object_name, size_t len, char *riscos_name)
 }
 
 /**
+ * Derive the RISC OS leafname for a Host leafname, applying the ",xxx" filetype
+ * and ",llllllll-eeeeeeee" load-exec truncation conventions. This is purely
+ * string based - it performs no stat() - so it can be used to reject
+ * non-matching directory entries cheaply, before paying for a full
+ * hostfs_read_object_info().
+ *
+ * @param host_leaf Host leafname (no directory component)
+ * @param ro_leaf   Return RISC OS leafname (filled-in)
+ */
+static void
+host_leaf_to_ro_leaf(const char *host_leaf, char *ro_leaf)
+{
+  const char *comma = strrchr(host_leaf, ',');
+  bool truncate_name = false; /* Whether a filetype/load-exec suffix was found */
+  size_t ro_leaf_len;
+
+  assert(host_leaf);
+  assert(ro_leaf);
+
+  /* Search for a filetype or load-exec after a comma */
+  if (comma) {
+    const char *dash = strrchr(comma + 1, '-');
+
+    if (dash) {
+      /* Check the lengths of the portions before and after the dash */
+      if ((dash - comma - 1) >= 1 && (dash - comma - 1) <= 8 &&
+          strlen(dash + 1) >= 1 && strlen(dash + 1) <= 8)
+      {
+        /* Check there is no whitespace present, as sscanf() silently
+           ignores it */
+        const char *whitespace = strpbrk(comma + 1, " \f\n\r\t\v");
+
+        if (!whitespace) {
+          ARMword load, exec;
+
+          if (sscanf(comma + 1, "%8x-%8x", &load, &exec) == 2) {
+            truncate_name = true;
+          }
+        }
+      }
+    } else if (strlen(comma + 1) == 3) {
+      if (isxdigit(comma[1]) && isxdigit(comma[2]) && isxdigit(comma[3])) {
+        truncate_name = true;
+      }
+    }
+  }
+
+  if (truncate_name) {
+    /* Only the part before the comma forms the leaf */
+    ro_leaf_len = (size_t) (comma - host_leaf);
+  } else {
+    /* The whole name forms the leaf */
+    ro_leaf_len = strlen(host_leaf);
+  }
+
+  name_host_to_riscos(host_leaf, ro_leaf_len, ro_leaf);
+}
+
+/**
  * Construct a new Host path based on an existing Host path,
  * and modifying it using the leaf of the RISC OS path, and the
  * load & exec addresses
@@ -593,19 +652,10 @@ hostfs_read_object_info(const char *host_pathname,
   object_info->attribs = DEFAULT_ATTRIBUTES;
 
   if (ro_leaf) {
-    /* Allocate and return leafname for RISC OS */
-    size_t ro_leaf_len;
-
-    if (truncate_name) {
-      /* If a filetype or load-exec was found, we only want the part from after
-         the slash to before the comma */
-      ro_leaf_len = comma - slash - 1;
-    } else {
-      /* Return everything from after the slash to the end */
-      ro_leaf_len = strlen(slash + 1);
-    }
-
-    name_host_to_riscos(slash + 1, ro_leaf_len, ro_leaf);
+    /* Derive and return the leafname for RISC OS (same conventions as
+       host_leaf_to_ro_leaf, which is also used by the directory scanner). */
+    (void) truncate_name;
+    host_leaf_to_ro_leaf(slash + 1, ro_leaf);
   }
 }
 
@@ -654,11 +704,15 @@ hostfs_path_scan(const char *host_dir_path,
       continue;
     }
 
-    strcpy(entry_path, host_dir_path);
-    strcat(entry_path, "/");
-    strcat(entry_path, entry->d_name);
-
-    hostfs_read_object_info(entry_path, ro_leaf, object_info);
+    /* Derive the RISC OS leafname from the Host filename alone and reject
+       non-matching entries before doing any stat(). Statting every entry here
+       made each path-component lookup cost O(entries-in-directory) stat()s;
+       on Windows, where each stat() is a comparatively expensive Win32 call
+       (and may be intercepted by anti-virus), a large directory such as a full
+       !Boot turned an ordinary file copy into a long synchronous burst that
+       stalled the emulator thread - starving mouse and keyboard input during
+       otherwise-multitasking HostFS activity. */
+    host_leaf_to_ro_leaf(entry->d_name, ro_leaf);
 
         for (c=0;c<strlen(ro_leaf);c++)
         {
@@ -666,15 +720,23 @@ hostfs_path_scan(const char *host_dir_path,
                    ro_leaf[c]='.';
         }
 
-    /* Ignore entries we can not read information about,
-       or which are neither regular files or directories */
-    if (object_info->type == OBJECT_TYPE_NOT_FOUND) {
-      continue;
-    }
-
     /* Compare leaf and object names in case-insensitive manner */
     if (!STRCASEEQ(ro_leaf, object)) {
       /* Names do not match */
+      continue;
+    }
+
+    /* Name matches - now pay for the stat() to fill in object_info and to
+       confirm the entry really is a readable file or directory. */
+    strcpy(entry_path, host_dir_path);
+    strcat(entry_path, "/");
+    strcat(entry_path, entry->d_name);
+
+    hostfs_read_object_info(entry_path, NULL, object_info);
+
+    /* Ignore entries we can not read information about,
+       or which are neither regular files or directories */
+    if (object_info->type == OBJECT_TYPE_NOT_FOUND) {
       continue;
     }
 
