@@ -19,6 +19,7 @@ set(RPCEMU_CORE_SOURCES
     iomd.c
     keyboard.c
     mem.c
+    rom_patch.c
     romload.c
     rpcemu.c
     savestate.c

@@ -274,9 +274,20 @@ void MainFrame::OnLoadState(wxCommandEvent &)
 
 void MainFrame::OnSuspend(wxCommandEvent &)
 {
-	/* Suspend is an explicit "save state and exit". The machine state is
-	   stored by OnClose (as it is for any exit), so this just closes. */
+	/* Suspend is an explicit "save state and exit": flag it so OnClose writes
+	   the snapshot even when the "Suspend on exit" setting is off, then close. */
+	suspend_on_exit_requested_ = true;
 	Close(true);
+}
+
+void MainFrame::OnSuspendOnExit(wxCommandEvent &event)
+{
+	const int on = event.IsChecked() ? 1 : 0;
+	config_copy_.suspend_on_exit = on;
+	config.suspend_on_exit = on;	/* what config_save() persists */
+	if (suspend_on_exit_menu_item_ != nullptr) {
+		suspend_on_exit_menu_item_->Check(on != 0);
+	}
 }
 
 void MainFrame::OnRecentMachine(wxCommandEvent &event)
@@ -1274,6 +1285,13 @@ void MainFrame::PostMachineSwitched(const std::string &machine_name)
 	});
 }
 
+void MainFrame::PostQuit()
+{
+	/* Called from the emulator thread; hop to the GUI thread and close the
+	   window, which runs the normal shutdown (stop + join the emu threads). */
+	CallAfter([this]() { Close(true); });
+}
+
 void MainFrame::OnExit(wxCommandEvent &) { Close(true); }
 
 void MainFrame::OnClose(wxCloseEvent &event)
@@ -1283,15 +1301,21 @@ void MainFrame::OnClose(wxCloseEvent &event)
 		return;
 	}
 
-	// Store the machine state on exit, so the session resumes next launch
-	// (the machine selector offers it as "Resume"). This must run while the
-	// emulator thread is still alive, before ShutdownEmulator() stops it.
+	// Store the machine state on exit so the next launch can Resume it (the
+	// machine selector offers it). This must run while the emulator thread is
+	// still alive, before ShutdownEmulator() stops it.
 	//
-	// Skip it if the emulator never started running (e.g. a fatal error like
-	// a missing ROM during startup) or if a fatal error has since occurred:
-	// in those cases the emulator thread cannot service a SaveState command,
-	// so attempting it would block forever, and its state is not worth saving.
-	if (emulator_ && emulator_->IsRunning() && !fatal_occurred_) {
+	// Only done when the user opted in - either File->Suspend (an explicit
+	// "save and exit", flagged here) or the "Suspend on exit" setting. A plain
+	// Quit shuts down cleanly and leaves no snapshot.
+	//
+	// Skip it regardless if the emulator never started running (e.g. a fatal
+	// error like a missing ROM during startup) or if a fatal error has since
+	// occurred: the emulator thread cannot service a SaveState command in those
+	// cases, so attempting it would block forever, and its state is not worth
+	// saving.
+	if (emulator_ && emulator_->IsRunning() && !fatal_occurred_ &&
+	    (config.suspend_on_exit || suspend_on_exit_requested_)) {
 		const wxString snapshot = ConfigPathsSnapshotForConfig(
 		    ConfigPathsAbsoluteConfigPath(wxString::FromUTF8(config_get_path())));
 		if (!emulator_->SaveState(snapshot.utf8_str().data())) {

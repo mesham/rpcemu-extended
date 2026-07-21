@@ -271,6 +271,15 @@ get_broadcast_address(struct in_addr *bcast, struct in_addr *host)
             continue;
         }
 
+        /* Must have a live carrier. IFF_UP only means administratively
+           enabled; an idle virtual bridge (e.g. docker0 with nothing
+           attached) is UP but not RUNNING. Without this check such an
+           interface can be selected ahead of the real LAN NIC, and Access
+           broadcasts then go out on a subnet with no peers. */
+        if (!(ifa->ifa_flags & IFF_RUNNING)) {
+            continue;
+        }
+
         /* Get broadcast address. Use the standard ifa_broadaddr spelling: on
            glibc it is a macro over the ifa_ifu union; on macOS/BSD it is a
            direct struct member (there is no ifa_ifu union there). */
@@ -480,6 +489,22 @@ inject_fragmented_udp(const struct sockaddr_in *from,
 
     /* Get unique IP ID for this datagram */
     ip_id = ip_id_counter++;
+
+    /* A datagram is only useful to the guest once every fragment has arrived;
+       delivering some fragments and then running out of inject-queue space
+       leaves the guest with an unreassemblable partial that stalls the
+       transfer (this is what broke large ShareFS copies). So require room for
+       all fragments up front - if it is not there, drop the whole datagram and
+       let the sender retransmit. The per-fragment step matches the loop below
+       (max_data_per_frag rounded down to an 8-byte multiple). */
+    {
+        int frag_step = max_data_per_frag & ~7;
+        int nfrags = (total_ip_payload + frag_step - 1) / frag_step;
+
+        if (network_nat_inject_space() < nfrags) {
+            return 0;
+        }
+    }
 
     /* First fragment includes UDP header */
     offset = 0;

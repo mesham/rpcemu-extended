@@ -104,6 +104,8 @@ void MainFrame::BuildMenus()
 	file_menu->Append(ID_MENU_RESET, "&Reset");
 	file_menu->AppendSeparator();
 	file_menu->Append(ID_MENU_SUSPEND, "Suspend");
+	suspend_on_exit_menu_item_ =
+	    file_menu->AppendCheckItem(ID_MENU_SUSPEND_ON_EXIT, "Suspend on Exit");
 	file_menu->Append(wxID_EXIT, "E&xit");
 
 	auto *disc_menu = new wxMenu;
@@ -231,6 +233,7 @@ void MainFrame::BuildMenus()
 	BindMenuItem(settings_menu, ID_MENU_FULLSCREEN, this, &MainFrame::OnFullscreen);
 	BindMenuItem(settings_menu, ID_MENU_INTEGER_SCALING, this, &MainFrame::OnIntegerScaling);
 	BindMenuItem(settings_menu, ID_MENU_FIT_TO_WINDOW, this, &MainFrame::OnFitToWindow);
+	BindMenuItem(file_menu, ID_MENU_SUSPEND_ON_EXIT, this, &MainFrame::OnSuspendOnExit);
 	BindMenuItem(settings_menu, ID_MENU_CPU_IDLE, this, &MainFrame::OnCpuIdle);
 	BindMenuItem(mouse_menu, ID_MENU_MOUSE_TWOBUTTON, this, &MainFrame::OnMouseTwobutton);
 #ifdef RPCEMU_VNC
@@ -383,6 +386,9 @@ void MainFrame::SyncSettingsMenuChecks()
 	}
 	if (fit_to_window_menu_item_ != nullptr) {
 		fit_to_window_menu_item_->Check(config_copy_.fit_to_window != 0);
+	}
+	if (suspend_on_exit_menu_item_ != nullptr) {
+		suspend_on_exit_menu_item_->Check(config_copy_.suspend_on_exit != 0);
 	}
 	if (mute_menu_item_ != nullptr) {
 		mute_menu_item_->Check(plt_sound_is_muted() != 0);

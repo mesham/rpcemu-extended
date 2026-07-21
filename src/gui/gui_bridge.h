@@ -25,6 +25,9 @@ public:
 	virtual void PostNatRule(PortForwardRule rule) = 0;
 	virtual void PostDebuggerStateChanged() = 0;
 	virtual void PostMachineSwitched(const std::string &machine_name) = 0;
+
+	/* The core is asking the application to quit (e.g. guest soft power-off). */
+	virtual void PostQuit() = 0;
 };
 
 #endif

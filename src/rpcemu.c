@@ -140,6 +140,7 @@ Config config = {
 	1,			/* debug_enabled (ON by default) */
 	"",			/* debug_socket (empty => <datadir>rpcemu-debug.sock) */
 	Model_RPCARM710,	/* model (configured machine model) */
+	0,			/* suspend_on_exit (OFF by default) */
 };
 
 /* Performance measuring variables */

@@ -570,6 +570,8 @@ extern "C" void config_load_from_path(Config *cfg, const char *path)
 	cfg->integer_scaling = static_cast<int>(value);
 	settings.Read("fit_to_window", &value, 0L);
 	cfg->fit_to_window = static_cast<int>(value);
+	settings.Read("suspend_on_exit", &value, 0L);
+	cfg->suspend_on_exit = static_cast<int>(value);
 	settings.Read("vnc_enabled", &value, 0L);
 	cfg->vnc_enabled = static_cast<int>(value);
 	settings.Read("vnc_port", &value, 5900L);
@@ -656,6 +658,7 @@ extern "C" void config_save_to_path(Config *cfg, const char *path)
 	settings.Write("show_fullscreen_message", static_cast<long>(cfg->show_fullscreen_message));
 	settings.Write("integer_scaling", static_cast<long>(cfg->integer_scaling));
 	settings.Write("fit_to_window", static_cast<long>(cfg->fit_to_window));
+	settings.Write("suspend_on_exit", static_cast<long>(cfg->suspend_on_exit));
 	settings.Write("vnc_enabled", static_cast<long>(cfg->vnc_enabled));
 	settings.Write("vnc_port", static_cast<long>(cfg->vnc_port));
 	settings.Write("vnc_password", wxString(cfg->vnc_password, wxConvUTF8));

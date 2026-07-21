@@ -3,6 +3,8 @@
 #include <cstdio>
 #include <cstdlib>
 
+#include "rpcemu.h"
+
 /*
  * Video is delivered to VNC clients straight from rpcemu_video_update(); the
  * bridge has nothing to draw. Likewise there is no host cursor to move, no NAT
@@ -26,6 +28,15 @@ void HeadlessBridge::PostDebuggerStateChanged()
 
 void HeadlessBridge::PostMachineSwitched(const std::string & /*machine_name*/)
 {
+}
+
+/*
+ * The guest asked to power off. There is no window to close; drop the emulator
+ * out of its run loop so the headless process exits cleanly.
+ */
+void HeadlessBridge::PostQuit()
+{
+	quited = 1;
 }
 
 /*

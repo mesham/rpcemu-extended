@@ -24,6 +24,7 @@ extern void network_nat_forward_edit(PortForwardRule old_rule, PortForwardRule n
 
 extern void network_nat_close(void);
 extern int network_nat_inject_packet(const uint8_t *pkt, int pkt_len);
+extern int network_nat_inject_space(void);
 
 #ifdef __cplusplus
 } /* extern "C" */

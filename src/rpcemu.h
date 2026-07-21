@@ -225,6 +225,7 @@ typedef struct {
 	int debug_enabled;	/**< Enable the DebugCmd control socket (host inspects/controls the emulated CPU) */
 	char debug_socket[512];	/**< Socket spec: empty = <datadir>rpcemu-debug.sock (AF_UNIX); a path = AF_UNIX; a bare port = TCP 127.0.0.1:port */
 	Model model;		/**< Configured machine model. Applied to machine.model on load; kept here so the configured model persists independently of the running machine.model (fixes model edits to a running machine being lost on save). */
+	int suspend_on_exit;	/**< Auto-save a machine snapshot on every exit (so the next launch can Resume). Off by default: normal Quit shuts down cleanly, and only File->Suspend / Save State write a snapshot. */
 } Config;
 
 extern Config config;
@@ -290,6 +291,11 @@ extern const char *rpcemu_get_resourcedir(void);
    synthesised monitor EDID (see romload.c / edid.c). */
 extern void rpcemu_set_host_display(unsigned width, unsigned height);
 extern int rpcemu_get_host_display(unsigned *width, unsigned *height);
+
+/* Request a clean application quit from the emulator core (e.g. the guest
+   asking to power off via OS_Reset "&OFF"). Routed to the front-end. */
+extern void rpcemu_request_poweroff(void);
+
 extern void rpcemu_set_datadir(const char *path);
 extern void rpcemu_set_resourcedir(const char *path);
 extern const char *rpcemu_get_machine_datadir(void);

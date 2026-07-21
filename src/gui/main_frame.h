@@ -72,6 +72,7 @@ enum MainFrameMenuId {
 	ID_MENU_FULLSCREEN,
 	ID_MENU_INTEGER_SCALING,
 	ID_MENU_FIT_TO_WINDOW,
+	ID_MENU_SUSPEND_ON_EXIT,
 	ID_MENU_VNC,
 	ID_MENU_SERIAL,
 	ID_MENU_PARALLEL,
@@ -133,6 +134,7 @@ public:
 	void PostNatRule(PortForwardRule rule) override;
 	void PostDebuggerStateChanged() override;
 	void PostMachineSwitched(const std::string &machine_name) override;
+	void PostQuit() override;
 
 private:
 	void OnClose(wxCloseEvent &event);
@@ -164,6 +166,7 @@ private:
 	void OnFullscreen(wxCommandEvent &event);
 	void OnIntegerScaling(wxCommandEvent &event);
 	void OnFitToWindow(wxCommandEvent &event);
+	void OnSuspendOnExit(wxCommandEvent &event);
 	void OnCpuIdle(wxCommandEvent &event);
 	void OnMouseHack(wxCommandEvent &event);
 	void OnMouseTwobutton(wxCommandEvent &event);
@@ -242,6 +245,7 @@ private:
 	wxMenuItem *fullscreen_menu_item_ = nullptr;
 	wxMenuItem *integer_scaling_menu_item_ = nullptr;
 	wxMenuItem *fit_to_window_menu_item_ = nullptr;
+	wxMenuItem *suspend_on_exit_menu_item_ = nullptr;
 	wxMenuItem *cpu_idle_menu_item_ = nullptr;
 	wxMenuItem *mouse_hack_menu_item_ = nullptr;
 	wxMenuItem *mouse_twobutton_menu_item_ = nullptr;
@@ -257,6 +261,7 @@ private:
 	wxToolBarToolBase *tb_mute_tool_ = nullptr;
 
 	bool shutting_down_ = false;
+	bool suspend_on_exit_requested_ = false;
 	/* Set as soon as a fatal error is raised (possibly from the emulator
 	   thread, which then spins forever and can no longer service commands).
 	   Guards the save-on-exit so it never blocks trying to snapshot a machine

@@ -41,6 +41,8 @@
 #define SWI_OS_Mouse		0x1c
 #define SWI_OS_CallASWI		0x6f
 #define SWI_OS_CallASWIR12	0x71
+#define SWI_OS_Reset		0x6a
+#define OS_RESET_POWEROFF_MAGIC	0x46464f26	/* "&OFF": documented soft power-off request */
 
 #define SWI_Portable_ReadFeatures	0x42fc5
 #define SWI_Portable_Idle		0x42fc6
@@ -583,6 +585,18 @@ opSWI(uint32_t opcode)
 	/* Debugger: trace/halt on SWI (gated to stay free when tracing is off) */
 	if (debugger_swi_trace_active) {
 		debugger_swi_hook(swinum, opcode);
+	}
+
+	/* Software power-off. With the Switcher patched to advertise power
+	   control (see rom_patch.c), the desktop's "Shutdown" ends by calling
+	   OS_Reset with R0 = "&OFF" - the documented request to power the machine
+	   off on hardware that supports it. RPCEmu has no PSU to switch but can
+	   close itself, so turn that into a clean application quit. Any other
+	   OS_Reset (a genuine reset) falls through to the guest untouched. */
+	if (swinum == SWI_OS_Reset && arm.reg[0] == OS_RESET_POWEROFF_MAGIC) {
+		rpcemu_request_poweroff();
+		arm.reg[cpsr] &= ~VFLAG;
+		return 0;
 	}
 
 	/* Intercept RISC OS Portable SWIs to enable RPCEmu to sleep when

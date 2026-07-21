@@ -57,6 +57,7 @@ void rpcemu_video_update(const uint32_t *buffer, int xsize, int ysize, int yl,
 }
 void rpcemu_move_host_mouse(uint16_t x, uint16_t y) { (void) x; (void) y; }
 void rpcemu_idle_process_events(void) {}
+void rpcemu_request_poweroff(void) {}
 void rpcemu_send_nat_rule_to_gui(void) {}
 uint64_t rpcemu_nsec_timer_ticks(void) { return 0; }
 

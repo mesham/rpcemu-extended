@@ -519,6 +519,28 @@ deliver_queued_packet(void)
 }
 
 /**
+ * Report how many more packets can currently be accepted for delivery to the
+ * guest.
+ *
+ * A caller that must deliver a set of packets all-or-nothing (the relay's IP
+ * fragments - a partial datagram cannot be reassembled by the guest) can check
+ * there is room for the whole set before injecting any of it.
+ *
+ * @return Number of free slots (0 if networking is not ready to receive)
+ */
+int
+network_nat_inject_space(void)
+{
+	if (nat.irq_status == 0 || network_poduleinfo == NULL) {
+		return 0;
+	}
+
+	/* One slot for the main buffer if idle, plus the free queue entries. */
+	return ((nat.buffer_len == 0) ? 1 : 0) +
+	       (PKT_QUEUE_SIZE - nat.pkt_queue_count);
+}
+
+/**
  * Inject a packet into the guest network.
  * Used by broadcast relay to deliver packets from host network.
  * Packets are queued if the main buffer is busy.

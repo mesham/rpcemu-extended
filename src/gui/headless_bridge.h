@@ -28,6 +28,7 @@ public:
 	void PostNatRule(PortForwardRule rule) override;
 	void PostDebuggerStateChanged() override;
 	void PostMachineSwitched(const std::string &machine_name) override;
+	void PostQuit() override;
 };
 
 #endif

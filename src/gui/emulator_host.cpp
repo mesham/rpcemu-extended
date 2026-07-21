@@ -265,6 +265,17 @@ extern "C" void rpcemu_send_nat_rule_to_gui(PortForwardRule rule)
 	}
 }
 
+extern "C" void rpcemu_request_poweroff(void)
+{
+	/* Guest soft power-off: ask the active front-end to quit. Fall back to
+	   stopping the emulation loop directly if no bridge is attached. */
+	if (g_gui_bridge != nullptr) {
+		g_gui_bridge->PostQuit();
+	} else {
+		quited = 1;
+	}
+}
+
 extern "C" void rpcemu_idle_process_events(void)
 {
 	if (g_emulator_host != nullptr) {
