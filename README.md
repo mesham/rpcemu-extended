@@ -12,7 +12,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 
 ## Highlights
 
-- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler gives full-speed emulation on Linux, Windows and Intel Macs; a native **arm64** recompiler is in development ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)). Builds from a single CMake codebase. See [Supported systems](#supported-systems).
+- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler gives full-speed emulation on Linux, Windows and Intel Macs. A native **arm64** recompiler is also implemented and validated under emulation ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)); it is not yet enabled in prebuilt releases, pending testing on real arm64 hardware. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
 - **Kinetic StrongARM (512MB)** — emulates the Acorn Risc PC **Kinetic** StrongARM processor card and its full **512MB** of RAM: the 256MB the motherboard IOMD can address, plus two 128MB on-card SDRAM banks. Boots RISC OS 5 straight to the desktop.
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
 - **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
@@ -101,7 +101,7 @@ Each GitHub release ships prebuilt packages for four targets:
 | Package | Platform | CPU core |
 | --- | --- | --- |
 | `rpcemu_*_amd64.deb` / `_linux_amd64.tar.gz` | Linux x86-64 | Recompiler (full speed) |
-| `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (native arm64 recompiler in development) |
+| `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (native arm64 recompiler implemented, not yet enabled in releases) |
 | `rpcemu_*_windows_amd64.zip` | Windows x64 (10/11) | Recompiler (full speed) |
 | `rpcemu_*_macos_universal.tar.gz` | macOS (Intel + Apple Silicon) | Universal binary — recompiler on Intel, interpreter on Apple Silicon |
 
@@ -175,7 +175,10 @@ is exactly what the `windows-amd64` CI job runs.
 
 `build-macos.sh` produces a **universal** binary — the Intel (x86-64) slice includes the
 dynamic recompiler, the Apple Silicon (arm64) slice is the interpreter — fused with
-`lipo`. Dependencies come from Homebrew. Build each slice, then fuse and package:
+`lipo`. Dependencies come from Homebrew. (A native arm64 recompiler now exists, but it
+is not yet used for the Apple Silicon slice: macOS's hardened runtime needs `MAP_JIT`
+support for the JIT buffer, which is still to do — see
+[docs/arm64-dynarec.md](docs/arm64-dynarec.md).) Build each slice, then fuse and package:
 
 ```bash
 ./build-macos.sh --arch x86_64   # Intel slice (recompiler)
@@ -372,6 +375,8 @@ how the JIT is built and when it falls back to interpretation.
 - Serial log-to-file and a real telnet TCP modem (dial BBSes, 8-bit-clean transfers)
 - Machine Inspector with disassembly and memory browser
 - Dynarec debugger hooks for consistent breakpoint/watchpoint behaviour
+- Debugger exception trapping, SWI tracing, and logging watchpoints (see [docs/debugger-tracing.md](docs/debugger-tracing.md))
+- Native arm64 (AArch64) recompiler backend, in addition to upstream's x86 dynarec — implemented and validated under emulation, not yet enabled in prebuilt releases (see [docs/arm64-dynarec.md](docs/arm64-dynarec.md))
 - Robustness & memory-safety hardening: bounds-checked HFE/ADF disc-image and HostFS input handling, FPA faults raised as undefined instructions rather than aborting the emulator, and a fixed use-after-free on GUI shutdown
 - CMake build system, cross-platform: Linux (amd64 and arm64), Windows (amd64, MinGW-w64), and macOS (universal — Intel + Apple Silicon)
 
