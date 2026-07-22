@@ -70,6 +70,11 @@ Podules are written against `src/podule_api.h` — the same `podule_probe()` /
 Shared device-support code (UART, MIDI/sound back-ends, VIA, ADC) lives in
 `src/podules/common/`.
 
+The podule subsystem — the `src/podule_api.h` ABI and the implementations under
+`src/podules/` — is derived from **[Arculator](https://b-em.bbcmicro.com/arculator/)**,
+Sarah Walker's Acorn Archimedes emulator, which is likewise GPL v2. Copyright of
+that code remains with Sarah Walker and the Arculator contributors.
+
 ---
 
 ## What is and isn't supported

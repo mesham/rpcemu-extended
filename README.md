@@ -1,10 +1,18 @@
 # RPCEmu – Spork Edition
 
-An extended fork of **[RPCEmu](http://www.marutan.net/rpcemu/)**, the open-source
-emulator for Acorn Risc PC and A7000 machines. This edition runs on **Linux, Windows
-and macOS** with a wxWidgets front-end, multi-machine configuration, integrated
-debugger and machine inspector, Access/ShareFS networking, full FPA emulation, and
-modern CMake-based build tooling.
+**A modern, cross-platform RISC OS machine on your desktop — and a serious platform for RISC OS development.**
+
+Spork Edition is an extended fork of **[RPCEmu](http://www.marutan.net/rpcemu/)**, the
+open-source emulator for Acorn's Risc PC and A7000, brought right up to date. It runs on
+**Linux, Windows and macOS** with a clean wxWidgets interface and a full-speed dynamic
+recompiler. Run **several machines** from a startup selector, **suspend and resume** a
+running system to disk, and emulate the **Kinetic StrongARM card with the full 512 MB of
+RAM** — booting RISC OS 5 straight to the desktop. Build software on it, too: edit on the
+host and compile on the guest over a socket with **HostCmd**, or drive a whole machine
+from an AI agent through the built-in **MCP server**. Round it out with an integrated
+**debugger and machine inspector**, a **built-in VNC server** and genuine **headless
+mode**, Access/ShareFS file sharing, high-resolution auto-detected displays, complete
+**FPA10** floating-point emulation, and modern CMake build tooling.
 
 Licensed under the **GNU GPL v2** — see `COPYING`.
 
@@ -412,5 +420,10 @@ networking features.
   Risc PC and A7000 emulator by Sarah Walker, Peter Howkins and the RPCEmu
   contributors, hosted at <http://www.marutan.net/rpcemu/>. RPCEmu is distributed
   under the GNU GPL v2; this fork inherits and complies with that license.
+- The **podule (expansion card) subsystem** — the podule API/ABI and the bundled
+  podule implementations under `src/podules/` — is derived from
+  **[Arculator](https://b-em.bbcmicro.com/arculator/)**, Sarah Walker's Acorn
+  Archimedes emulator, also distributed under the GNU GPL v2. Copyright of that
+  code remains with **Sarah Walker** and the Arculator contributors.
 - Spork Edition enhancements by Andy Timmins and contributors.
 - Machine save/load state (suspend & resume) contributed by **Nick Brown**.
