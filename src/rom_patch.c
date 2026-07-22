@@ -2,7 +2,7 @@
   RPCEmu - An Acorn system emulator
 
   Copyright (C) 2005-2010 Sarah Walker
-  Copyright (C) 2025 Andrew Timmins
+  Copyright (C) 2025 Andy Timmins
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by

@@ -1,6 +1,11 @@
 /*
   RPCEmu - An Acorn system emulator
 
+  Copyright (C) 2025 Nick Brown
+
+  Machine save-state (suspend/resume) core, contributed to RPCEmu Spork
+  Edition by Nick Brown.
+
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
   the Free Software Foundation; either version 2 of the License, or
