@@ -73,7 +73,7 @@ install(DIRECTORY docs/ DESTINATION share/doc/rpcemu)
 # configured and installed from src/gui/CMakeLists.txt where the name is known.
 
 set(CPACK_PACKAGE_NAME "rpcemu")
-set(CPACK_PACKAGE_VENDOR "Andrew Timmins")
+set(CPACK_PACKAGE_VENDOR "Andy Timmins")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RPCEmu (Spork Edition)")
 set(CPACK_PACKAGE_DESCRIPTION "Acorn RiscPC and A7000 emulator with HostFS, networking, and Spork Edition enhancements.")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
@@ -84,7 +84,7 @@ set(CPACK_PACKAGE_CONTACT "andrew@example.com")
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/andrewtimmins/rpcemu-extended")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_SOURCE_DIR}/COPYING")
 
-set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Andrew Timmins")
+set(CPACK_DEBIAN_PACKAGE_MAINTAINER "Andy Timmins")
 set(CPACK_DEBIAN_PACKAGE_SECTION "games")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 # Derive the runtime dependencies automatically from the linked binary via

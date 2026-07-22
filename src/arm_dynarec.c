@@ -2,6 +2,7 @@
   RPCEmu - An Acorn system emulator
 
   Copyright (C) 2005-2010 Sarah Walker
+  Copyright (C) 2025-2026 Andy Timmins
 
   This program is free software; you can redistribute it and/or modify
   it under the terms of the GNU General Public License as published by
@@ -44,6 +45,8 @@ int blockend;
 #	include "codegen_amd64.h"
 #elif defined i386 || defined __i386 || defined __i386__ || defined _X86_
 #	include "codegen_x86.h"
+#elif defined __aarch64__
+#	include "codegen_arm64.h"
 #else
 #	error "Fatal error : no recompiler available for this architecture"
 #endif

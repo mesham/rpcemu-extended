@@ -1,9 +1,20 @@
-# Unit tests. The JIT flag tester needs the amd64 recompiler and its test hooks
+# Unit tests. The JIT differential testers use the recompiler's test hooks
 # (compiled into rpcemu_core when RPCEMU_JIT_TEST is set, see src/CMakeLists.txt).
-if(RPCEMU_DYNAREC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
-    add_executable(test_jit_flags test_jit_flags.c test_stubs.c)
-    target_link_libraries(test_jit_flags PRIVATE rpcemu_core m)
-    add_test(NAME jit_flags COMMAND test_jit_flags)
+# They compare each recompiled instruction class against the interpreter and are
+# architecture-generic: they validate whichever native backend is built
+# (amd64/x86 or arm64).
+if(RPCEMU_DYNAREC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|aarch64|arm64|ARM64")
+    foreach(jit_test
+            test_jit_flags   # data-processing NZCV flags
+            test_jit_mem     # LDR/STR/LDRB/STRB addressing modes
+            test_jit_branch  # B / BL
+            test_jit_mul     # MUL / MLA / UMULL
+            test_jit_ldmstm  # LDM / STM
+            test_jit_e2e)    # block linking + full-program integration
+        add_executable(${jit_test} ${jit_test}.c test_stubs.c)
+        target_link_libraries(${jit_test} PRIVATE rpcemu_core m)
+        add_test(NAME ${jit_test} COMMAND ${jit_test})
+    endforeach()
 else()
-    message(STATUS "Skipping JIT flag tests (requires amd64 dynarec build)")
+    message(STATUS "Skipping JIT differential tests (requires a native dynarec backend)")
 endif()

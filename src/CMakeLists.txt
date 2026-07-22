@@ -77,6 +77,8 @@ if(RPCEMU_DYNAREC)
         list(APPEND RPCEMU_CORE_SOURCES codegen_amd64.c)
     elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "i386|i686|X86")
         list(APPEND RPCEMU_CORE_SOURCES codegen_x86.c)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|ARM64")
+        list(APPEND RPCEMU_CORE_SOURCES codegen_arm64.c)
     else()
         message(FATAL_ERROR "No dynarec backend for processor ${CMAKE_SYSTEM_PROCESSOR}")
     endif()
@@ -171,7 +173,7 @@ endif()
 
 # Expose the JIT test hooks (codegen_test_compile/_interp) for the differential
 # flag tester. amd64 dynarec only; releases can disable with RPCEMU_BUILD_TESTS=OFF.
-if(RPCEMU_BUILD_TESTS AND RPCEMU_DYNAREC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+if(RPCEMU_BUILD_TESTS AND RPCEMU_DYNAREC AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|aarch64|arm64|ARM64")
     target_compile_definitions(rpcemu_core PRIVATE RPCEMU_JIT_TEST)
 endif()
 
