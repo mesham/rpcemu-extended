@@ -1,7 +1,9 @@
 # How to Compile RPCEmu
 
-RPCEmu (Spork Edition) is a **Linux-only** build. It uses **CMake** and the `build.sh`
-script at the project root.
+RPCEmu (Spork Edition) builds with **CMake**. This guide covers the **Linux** build
+via the `build.sh` script at the project root; for the other platforms see
+[docs/windows-build.md](docs/windows-build.md) and
+[docs/macos-build.md](docs/macos-build.md).
 
 The emulator core (`src/`) is C11. The wxWidgets front-end (`src/gui/`) is C++17.
 
@@ -115,7 +117,7 @@ cmake --build build -j"$(nproc)"
 
 | Option | Default | Description |
 | --- | --- | --- |
-| `RPCEMU_DYNAREC` | ON | Link the ARM-to-x86 dynarec (x86 hosts only) |
+| `RPCEMU_DYNAREC` | ON | Link the dynamic recompiler (x86-64, i386 or arm64 hosts) |
 | `RPCEMU_ENABLE_VNC` | ON | VNC server support (requires libvncserver) |
 | `RPCEMU_ENABLE_GHOSTPDL` | ON | Link against Ghostscript/GhostPDL for in-process PDF conversion |
 | `RPCEMU_ENABLE_WARNINGS` | ON | Extra compiler warnings (`-Wall -Wextra -Werror=switch`) |
@@ -134,8 +136,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
 cmake --build build -j"$(nproc)"
 ```
 
-On **arm64** hosts (e.g. Raspberry Pi), use `--interpreter` or `-DRPCEMU_DYNAREC=OFF`
-because the dynarec JIT targets x86 hosts.
+On **arm64** hosts (e.g. Raspberry Pi, Apple Silicon) the dynarec now builds a
+native AArch64 backend ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)), selected
+automatically. It is new — validated under `qemu-aarch64` but not yet exercised on
+real arm64 hardware — so if you hit trouble, fall back to the interpreter with
+`--interpreter` (or `-DRPCEMU_DYNAREC=OFF`) and please report it.
 
 Further detail: [docs/dynarec.md](docs/dynarec.md).
 
@@ -182,7 +187,7 @@ to publish a GitHub Release with the Linux tarball. Update `VERSION` before tagg
 | wxWidgets not found | Install `libwxgtk3.2-dev` |
 | VNC build fails | Install `libvncserver-dev`, or `-DRPCEMU_ENABLE_VNC=OFF` |
 | Ghostscript not detected | Install `libgs-dev`, or `-DRPCEMU_ENABLE_GHOSTPDL=OFF` |
-| Dynarec fails on arm64 | Use `./build.sh --interpreter` |
+| Dynarec misbehaves on arm64 (new backend) | Fall back with `./build.sh --interpreter` and report it |
 
 ---
 

@@ -5,7 +5,8 @@ RPCEmu emulates the guest **ARM** CPU in two ways:
 1. **Software interpreter** (`arm.c`) — decodes and executes each guest instruction in
    host code (`rpcemu-interpreter`).
 2. **Dynamic recompiler** (`arm_dynarec.c` plus `codegen_*.c`) — translates guest ARM
-   instruction sequences into native **x86** code and runs that (`rpcemu-recompiler`).
+   instruction sequences into native host code (x86-64, i386 or arm64) and runs that
+   (`rpcemu-recompiler`).
 
 Both are implemented in C. The choice is **how guest instructions run**, not what
 language the emulator is written in.
@@ -33,9 +34,10 @@ The codegen backend follows the **host** CPU (`src/CMakeLists.txt`):
 | --- | --- |
 | x86_64 | `codegen_amd64.c` |
 | i386 / i686 | `codegen_x86.c` |
-| Other (e.g. arm64) | Configure fails if dynarec is ON |
+| aarch64 / arm64 | `codegen_arm64.c` (see [arm64-dynarec.md](arm64-dynarec.md)) |
+| Other | Configure fails if dynarec is ON |
 
-On arm64 Linux hosts, build the interpreter:
+On a host with no dynarec backend, build the interpreter instead:
 
 ```bash
 ./build.sh --interpreter
@@ -54,11 +56,13 @@ See [COMPILE.md](../COMPILE.md) for the full build reference.
 | `src/arm_dynarec.c` | Execution loop, block compilation, debugger hooks |
 | `src/arm_dynarec_ops.h` | Opcode dispatch table for the dynarec build |
 | `src/codegen_amd64.c` / `codegen_x86.c` | Emit x86 machine code, block cache |
+| `src/codegen_arm64.c` | Emit AArch64 machine code (see [arm64-dynarec.md](arm64-dynarec.md)) |
 | `src/codegen_x86_common.h` | Shared helpers (i386 codegen) |
 | `src/codegen_null.c` | Stubs when dynarec is disabled |
 
-Compiled guest code is stored in `rcodeblock[][]`. On Linux, `set_memory_executable()`
-in `arm_dynarec.c` marks that region with `mprotect(..., PROT_EXEC)`.
+Compiled guest code is stored in `rcodeblock[][]`. `set_memory_executable()` in
+`arm_dynarec.c` marks that region executable — `mprotect()` on Linux and macOS,
+`VirtualProtect()` on Windows.
 
 ---
 
@@ -113,49 +117,55 @@ ARM710, and ARM7500 are selectable but less exercised.
 Many programs that use self-modifying code work (e.g. Ovation, SparkFS). If something
 misbehaves under JIT, try `rpcemu-interpreter` or `*cache 0` in a recompiler build.
 
-FPA10 emulation is available with both CPU backends.
+FPA10 emulation is available in both the interpreter and the dynarec.
 
 ---
 
-## i386 vs amd64 codegen
+## Codegen backends
 
-Both share the same driver in `arm_dynarec.c`. Differences:
+All backends share the same driver in `arm_dynarec.c` and differ only in the
+machine code they emit:
 
-| | i386 (`codegen_x86.c`) | amd64 (`codegen_amd64.c`) |
-| --- | --- | --- |
-| `BLOCKSTART` | 16 | 32 |
-| Flag helpers | `LAHF` and lookup tables | x86-64 flag tests in emitted code |
-| Block linking | Jump to next compiled block at block end | Same idea |
+| | i386 (`codegen_x86.c`) | amd64 (`codegen_amd64.c`) | arm64 (`codegen_arm64.c`) |
+| --- | --- | --- | --- |
+| Host | 32-bit x86 | x86-64 | AArch64 |
+| `BLOCKSTART` | 16 | 32 | 32 |
+| Inline flag-setting ops | no | yes | yes |
+| Block linking | yes | yes | yes |
 
-The amd64 backend is largely ported from i386. Some emitted code still relies on
-32-bit absolute addresses; further tuning (register pinning, LDM/STM, chaining) is
-possible.
+The arm64 backend is described in detail in [arm64-dynarec.md](arm64-dynarec.md).
 
-### Flag-setting instructions (amd64)
+### Inline flag-setting instructions (amd64 and arm64)
 
-The amd64 backend recompiles the flag-setting data-processing and compare
-instructions inline rather than calling the interpreter. `gen_native_flags()`
-materialises ARM `NZCV` from the host `EFLAGS` produced by the operation (`SETcc`
-+ `LAHF`), writing them into the cached R15 (26-bit) or `arm.reg[16]` (32-bit):
+The amd64 and arm64 backends recompile the flag-setting data-processing and
+compare instructions inline rather than calling the interpreter.
+`gen_native_flags()` produces the ARM `NZCV` flags from the host and merges them
+into the cached R15 (26-bit mode) or `arm.reg[16]` (32-bit mode). On amd64 the
+flags come from the x86 `EFLAGS` (via `SETcc`/`LAHF`); on arm64 they come straight
+from the host `NZCV`, which lines up with the ARM condition flags bit-for-bit (and
+`SUBS` sets carry as NOT-borrow, exactly as ARM does). Both cover:
 
 - Arithmetic and compares — `ADDS`, `SUBS`, `RSBS`, `CMP`, `CMN` (register and
-  immediate). The ARM carry is the inverse of the host carry for subtract/compare.
-- Logical/move/test — `ANDS`, `EORS`, `ORRS`, `BICS`, `MOVS`, `MVNS`, `TST`, `TEQ`
-  — only when operand 2's shift cannot alter the carry (no register/immediate
-  shift, immediate rotate 0); otherwise they fall back to the interpreter.
-- `ADCS`/`SBCS`/`RSCS` are not yet recompiled (carry-in sourcing differs by mode)
-  and continue to use the interpreter.
+  immediate).
+- Logical / move / test — `ANDS`, `EORS`, `ORRS`, `BICS`, `MOVS`, `MVNS`, `TST`,
+  `TEQ` — when operand 2's shift cannot alter the carry; otherwise they fall back.
+- `ADCS` / `SBCS` / `RSCS` fall back to the interpreter (carry-in sourcing differs
+  by mode).
 
-Correctness is covered by `tests/test_jit_flags.c` (run via `ctest`), which checks
-the recompiled output against the interpreter across carry/overflow edge cases in
-both 26- and 32-bit modes. The i386 backend does not yet have this and still calls
-the interpreter for flag-setting ops.
+The i386 backend does not recompile flag-setting ops inline; it calls the
+interpreter for them.
+
+Correctness is covered by the differential tests in `tests/` (run via `ctest`),
+which check each recompiled instruction class against the interpreter across
+carry/overflow edge cases in both 26- and 32-bit modes. They are
+architecture-generic and validate the amd64 and arm64 backends alike.
 
 ---
 
 ## Limitations
 
-- JIT requires an **x86** host. No dynarec when building for arm64.
+- A dynarec backend exists for x86-64, i386 and arm64; on any other host, build
+  the interpreter.
 - Block chaining (direct jump to the already-compiled successor block) helps loops;
   extending backward branches inside a single block was tried with little benefit.
 - Guest prefetch and data aborts depend on correct interaction between generated loads,
@@ -166,5 +176,5 @@ the interpreter for flag-setting ops.
 ## Origin
 
 The dynarec was written by Sarah Walker for upstream RPCEmu. Spork Edition builds it
-via CMake on Linux and ties it to the integrated Machine Inspector debugger as
-described above.
+via CMake, ties it to the integrated Machine Inspector debugger as described above,
+and adds the AArch64 backend ([arm64-dynarec.md](arm64-dynarec.md)).

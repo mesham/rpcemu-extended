@@ -12,7 +12,7 @@ Licensed under the **GNU GPL v2** — see `COPYING`.
 
 ## Highlights
 
-- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler works on Linux, Windows, and Intel Macs, so those get full-speed emulation. Builds from a single CMake codebase. See [Supported systems](#supported-systems).
+- **Cross-platform** — runs on **Linux** (amd64 + arm64), **Windows** (amd64), and **macOS** (universal — Intel + Apple Silicon). The x86-64 dynamic recompiler gives full-speed emulation on Linux, Windows and Intel Macs; a native **arm64** recompiler is in development ([docs/arm64-dynarec.md](docs/arm64-dynarec.md)). Builds from a single CMake codebase. See [Supported systems](#supported-systems).
 - **Kinetic StrongARM (512MB)** — emulates the Acorn Risc PC **Kinetic** StrongARM processor card and its full **512MB** of RAM: the 256MB the motherboard IOMD can address, plus two 128MB on-card SDRAM banks. Boots RISC OS 5 straight to the desktop.
 - **Multi-machine configuration** — create, edit, clone, and delete machine profiles from a startup selector; each machine has isolated CMOS, HostFS, and hard disc storage.
 - **Quick machine switching** — switch between machines via *File → Recent Machines* without restarting.
@@ -70,11 +70,15 @@ Build with **CMake** — see [COMPILE.md](COMPILE.md) for full details.
 | `packaging/` | Desktop entry and other packaging files |
 | `build.sh` | Unified build and release script |
 | `docs/dynarec.md` | ARM dynamic recompiler (build, behaviour, limitations) |
+| `docs/arm64-dynarec.md` | AArch64 (arm64) dynarec backend |
 | `docs/peripherals.md` | Serial and parallel ports (file logging, TCP modem, printer) |
 | `docs/podules.md` | Expansion cards (podules): bundled devices, configuration, plugin ABI |
 | `docs/hostcmd.md` | HostCmd: drive the RISC OS command line from the host (`rpcemu-run`/`rpcemu-shell`) |
 | `tools/mcp/README.md` | MCP server: drive a RISC OS machine from Claude / an agent (commands, files, screen, debugger). Setup + tool reference. |
 | `docs/debugcmd.md` | DebugCmd: control the emulated CPU over a socket (registers, memory, disassembly, breakpoints, single-step) |
+| `docs/debugger-tracing.md` | Debugger: exception trapping, SWI tracing, logging watchpoints |
+| `docs/windows-build.md` | Building for Windows (MinGW-w64) |
+| `docs/macos-build.md` | Building for macOS (universal binary) |
 | `setup-build-env.sh` | Install build dependencies (Debian/Ubuntu) |
 
 ### Where your data lives
@@ -97,7 +101,7 @@ Each GitHub release ships prebuilt packages for four targets:
 | Package | Platform | CPU core |
 | --- | --- | --- |
 | `rpcemu_*_amd64.deb` / `_linux_amd64.tar.gz` | Linux x86-64 | Recompiler (full speed) |
-| `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (no ARM dynarec yet) |
+| `rpcemu_*_arm64.deb` / `_linux_arm64.tar.gz` | Linux arm64 (e.g. Raspberry Pi) | Interpreter (native arm64 recompiler in development) |
 | `rpcemu_*_windows_amd64.zip` | Windows x64 (10/11) | Recompiler (full speed) |
 | `rpcemu_*_macos_universal.tar.gz` | macOS (Intel + Apple Silicon) | Universal binary — recompiler on Intel, interpreter on Apple Silicon |
 
@@ -281,6 +285,7 @@ Open **Debug → Machine Inspector…** (or use the toolbar button).
 | **Disassembly** | ARM disassembly at a chosen address, optional follow-PC |
 | **Memory** | Hex dump of emulated memory at a chosen address |
 | **Debugger** | Run/Pause/Step, breakpoint and watchpoint lists, last halt reason |
+| **Trace** | Exception traps, SWI tracing, and logging watchpoints — see [docs/debugger-tracing.md](docs/debugger-tracing.md) |
 | **Peripherals** | VIDC, IOMD IRQ/timers, floppy, IDE, podule slot summary |
 
 Auto-refresh runs every 500 ms by default. Breakpoints and watchpoints work while
@@ -402,5 +407,5 @@ networking features.
   Risc PC and A7000 emulator by Sarah Walker, Peter Howkins and the RPCEmu
   contributors, hosted at <http://www.marutan.net/rpcemu/>. RPCEmu is distributed
   under the GNU GPL v2; this fork inherits and complies with that license.
-- Spork Edition enhancements by Andrew Timmins and contributors.
+- Spork Edition enhancements by Andy Timmins and contributors.
 - Machine save/load state (suspend & resume) contributed by **Nick Brown**.
