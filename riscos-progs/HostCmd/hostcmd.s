@@ -1,5 +1,13 @@
 @ RPCEmu HostCmd gateway module
 @
+@ Copyright (C) 2025-2026 Andy Timmins
+@
+@ This program is free software; you can redistribute it and/or modify it under
+@ the terms of the GNU General Public License as published by the Free Software
+@ Foundation; either version 2 of the License, or (at your option) any later
+@ version. It is distributed in the hope that it will be useful, but WITHOUT ANY
+@ WARRANTY; see the GNU General Public License (COPYING) for more details.
+@
 @ Guest-side half of HostCmd. A background ticker polls the emulator (via the
 @ ArcEm HostCmd SWI) for a command line submitted by the host; when one
 @ arrives it is run through OS_CLI from a transient callback with WrchV claimed,
